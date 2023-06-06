@@ -2,108 +2,104 @@ import telebot
 import sqlite3
 
 bot = telebot.TeleBot('5814634251:AAFS0f5noql7q2NUjM4fHEN7wAV7fC-UCN4')
-first_name = None
-last_name = None
-age = None
-work_experience_age = None
-places_of_work = None
-bad_habits = None
-
-
-
 
 @bot.message_handler(commands=['start'])
 def start(message):
     conn = sqlite3.connect('bd.sqlite3')
     cur = conn.cursor()
 
-    cur.execute('CREATE TABLE IF NOT EXISTS users (id int auto_increment primary key, first_name varchar(50), last_name varchar(50), age varchar(50), work_experience_age varchar(50), places_of_work varchar(50), bad_habits varchar(50))')
+    cur.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INT,
+        first_name TEXT, 
+        last_name TEXT, 
+        age INT, 
+        work_experience_age INT, 
+        rate INT, 
+        places_of_work TEXT, 
+        bad_habits TEXT)""")
     conn.commit()
+
+    cur.execute("INSERT INTO users (telegram_id) VALUES (?)", (message.chat.id,))
+    conn.commit()
+    user_id = cur.lastrowid
+
     cur.close()
     conn.close()
 
-    mess = f' Привет! Введите свое имя'
-    bot.send_message(message.chat.id, mess)
-    bot.register_next_step_handler(message, user_first_name)
+    bot.send_message(message.chat.id, 'Привет! Введите свое имя')
+    bot.register_next_step_handler(message, user_first_name, user_id)
 
-
-def user_first_name(message):
-    global first_name
+def user_first_name(message, user_id):
     first_name = message.text.strip()
     bot.send_message(message.chat.id, 'Введите свою фамилию')
-    bot.register_next_step_handler(message, user_last_name)
+    bot.register_next_step_handler(message, user_last_name, user_id, first_name)
 
-
-def user_last_name(message):
-    global last_name
+def user_last_name(message, user_id, first_name):
     last_name = message.text.strip()
     bot.send_message(message.chat.id, 'Введите свой возраст')
-    bot.register_next_step_handler(message, user_age)
+    bot.register_next_step_handler(message, user_age, user_id, first_name, last_name)
 
-
-def user_age(message):
-    global age
+def user_age(message, user_id, first_name, last_name):
     age = message.text.strip()
     bot.send_message(message.chat.id, 'Введите стаж работы')
-    bot.register_next_step_handler(message, user_work_experience_age)
+    bot.register_next_step_handler(message, user_work_experience_age, user_id, first_name, last_name, age)
 
-
-def user_work_experience_age(message):
-    global work_experience_age
+def user_work_experience_age(message, user_id, first_name, last_name, age):
     work_experience_age = message.text.strip()
+    rate = (int(work_experience_age) + int(age)) / 10
     bot.send_message(message.chat.id, 'Введите места, в которых Вы работали')
-    bot.register_next_step_handler(message, user_places_of_work)
+    bot.register_next_step_handler(message, user_places_of_work, user_id, first_name, last_name, age, work_experience_age, rate)
 
-def user_places_of_work(message):
-    global places_of_work
+def user_places_of_work(message, user_id, first_name, last_name, age, work_experience_age, rate):
     places_of_work = message.text.strip()
     bot.send_message(message.chat.id, 'Введите свои вредные привычки, если их нет, то напишите: "Вредных привычек нет"')
-    bot.register_next_step_handler(message, user_bad_habits)
+    bot.register_next_step_handler(message, user_bad_habits, user_id, first_name, last_name, age, work_experience_age, rate, places_of_work)
 
-def user_bad_habits(message):
-    global bad_habits
+def user_bad_habits(message, user_id, first_name, last_name, age, work_experience_age, rate, places_of_work):
     bad_habits = message.text.strip()
 
     conn = sqlite3.connect('bd.sqlite3')
     cur = conn.cursor()
 
-    cur.execute("INSERT INTO users (first_name, last_name, age, work_experience_age, places_of_work, bad_habits) VALUES ('%s', '%s', '%s', '%s', '%s', '%s')" % (first_name, last_name, age, work_experience_age, places_of_work, bad_habits))
+    cur.execute(
+        "UPDATE users SET first_name=?, last_name=?, age=?, work_experience_age=?, rate=?, places_of_work=?, bad_habits=? WHERE id=?",
+        (first_name, last_name, age, work_experience_age, rate, places_of_work, bad_habits, user_id))
+
     conn.commit()
     cur.close()
     conn.close()
 
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton('Список пользователей', callback_data='users'))
-    bot.send_message(message.chat.id, 'Вы зарегестрированы!', reply_markup=markup)
+    markup.add(telebot.types.InlineKeyboardButton('Ваша анкета', callback_data='users'))
+    bot.send_message(message.chat.id, 'Вы зарегистрированы!', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     conn = sqlite3.connect('bd.sqlite3')
     cur = conn.cursor()
 
-    cur.execute('SELECT * FROM users')
-    users = cur.fetchall()
+    cur.execute(f"SELECT * FROM users WHERE telegram_id={call.message.chat.id}")
+    user = cur.fetchone()
 
-    info = ''
-    for el in users:
-        info += f'Имя: {el[1]}\n Фамилия: {el[2]}\n Возраст: {el[3]}\n Стаж работы: {el[4]}\n Места, в которых вы работали: {el[5]}\n Вредные привычки: {el[6]}\n'
+    if user:
+        info = f'Имя: {user[2]}\nФамилия: {user[3]}\nВозраст: {user[4]}\nСтаж работы: {user[5]}\nВаш рейтинг: {user[6]}\nМеста, в которых вы работали: {user[7]}\nВредные привычки: {user[8]}'
+        bot.send_message(call.message.chat.id, info)
+    else:
+        bot.send_message(call.message.chat.id, 'Данные пользователя не найдены')
 
     cur.close()
     conn.close()
 
-    bot.send_message(call.message.chat.id, info)
-
-
 @bot.message_handler(commands=['help'])
 def help(message):
-    bot.send_message(message.chat.id, ' \n'
-
-                                      ' \n', parse_mode='html')
-
+    bot.send_message(message.chat.id, ' ', parse_mode='html')
 
 @bot.message_handler()
 def get_user_text(message):
-    bot.send_message(message.chat.id, 'Прости, я тебя не понимаю', parse_mode='html')
-
+    if message.text.strip():
+        bot.send_message(message.chat.id, 'Прости, я тебя не понимаю', parse_mode='html')
+    else:
+        bot.send_message(message.chat.id, 'Вы отправили пустое сообщение')
 
 bot.polling(none_stop=True)
