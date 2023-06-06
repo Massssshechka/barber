@@ -3,6 +3,8 @@ import sqlite3
 
 bot = telebot.TeleBot('5814634251:AAFS0f5noql7q2NUjM4fHEN7wAV7fC-UCN4')
 
+target_users = ['97124558']
+
 @bot.message_handler(commands=['start'])
 def start(message):
     conn = sqlite3.connect('bd.sqlite3')
@@ -69,6 +71,14 @@ def user_bad_habits(message, user_id, first_name, last_name, age, work_experienc
     conn.commit()
     cur.close()
     conn.close()
+
+    for target_user in target_users:
+        bot.send_message(target_user, f'Новая анкета от пользователя {first_name} {last_name}:\n'
+                                      f'Возраст: {age}\n'
+                                      f'Стаж работы: {work_experience_age}\n'
+                                      f'Рейтинг: {rate}\n'
+                                      f'Места работы: {places_of_work}\n'
+                                      f'Вредные привычки: {bad_habits}')
 
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton('Ваша анкета', callback_data='users'))
