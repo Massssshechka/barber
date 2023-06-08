@@ -1,9 +1,10 @@
 import telebot
 import sqlite3
+from telebot import types
 
 bot = telebot.TeleBot('5814634251:AAFS0f5noql7q2NUjM4fHEN7wAV7fC-UCN4')
 
-target_users = ['97124558']
+target_users = ['893499566']
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -80,9 +81,133 @@ def user_bad_habits(message, user_id, first_name, last_name, age, work_experienc
                                       f'Места работы: {places_of_work}\n'
                                       f'Вредные привычки: {bad_habits}')
 
+
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton('Ваша анкета', callback_data='users'))
+    markup.add(types.InlineKeyboardButton ("Изменить свою анкету", callback_data='change_profile'))
     bot.send_message(message.chat.id, 'Вы зарегистрированы!', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'change_profile')
+def change_profile_callback(call):
+    bot.send_message(call.message.chat.id, 'Введите "update", чтобы изменить свою анкету:')
+    bot.register_next_step_handler(call.message, update_profile)
+
+def update_profile(message):
+    message.text = message.text.lower().capitalize()
+    conn = sqlite3.connect('bd.sqlite3')
+    cur = conn.cursor()
+
+    cur.execute(f"SELECT * FROM users WHERE telegram_id={message.chat.id}")
+    user = cur.fetchone()
+
+    if user:
+        # Извлечение информации о пользователе из базы данных
+        user_id = user[0]
+        first_name = user[2]
+        last_name = user[3]
+        age = user[4]
+        work_experience_age = user[5]
+        rate = user[6]
+        places_of_work = user[7]
+        bad_habits = user[8]
+
+        # Отправка сообщения с текущими данными пользователя и запрос на изменение полей
+        info = f'Текущая анкета:\n' \
+               f'Имя: {first_name}\n' \
+               f'Фамилия: {last_name}\n' \
+               f'Возраст: {age}\n' \
+               f'Стаж работы: {work_experience_age}\n' \
+               f'Рейтинг: {rate}\n' \
+               f'Места, в которых вы работали: {places_of_work}\n' \
+               f'Вредные привычки: {bad_habits}\n\n' \
+               f'Введите новые данные, используя следующий формат:\n' \
+               f'Имя: <Новое имя>\n' \
+               f'Фамилия: <Новая фамилия>\n' \
+               f'Возраст: <Новый возраст>\n' \
+               f'Стаж работы: <Новый стаж работы>\n' \
+               f'Места работы: <Новые места работы>\n' \
+               f'Вредные привычки: <Новые вредные привычки>'
+        bot.send_message(message.chat.id, info)
+        bot.register_next_step_handler(message, process_update, user_id)
+    else:
+        bot.send_message(message.chat.id, 'Данные пользователя не найдены')
+
+    cur.close()
+    conn.close()
+
+def process_update(message, user_id):
+    update_data = message.text.strip().lower().split(':')
+    field = update_data[0].strip()
+    new_value = update_data[1].strip()
+    new_value = new_value.capitalize()
+
+    conn = sqlite3.connect('bd.sqlite3')
+    cur = conn.cursor()
+
+    cur.execute(f"SELECT * FROM users WHERE id={user_id}")
+    user = cur.fetchone()
+
+    if user:
+        first_name = user[2]
+        last_name = user[3]
+        age = user[4]
+        work_experience_age = user[5]
+        rate = user[6]
+        places_of_work = user[7]
+        bad_habits = user[8]
+
+        # Обновление выбранного поля анкеты пользователя
+        if field == 'имя':
+            first_name = new_value
+        elif field == 'фамилия':
+            last_name = new_value
+        elif field == 'возраст':
+            age = new_value
+        elif field == 'стаж работы':
+            work_experience_age = new_value
+            rate = (int(work_experience_age) + int(age)) / 10
+        elif field == 'места работы':
+            places_of_work = new_value
+        elif field == 'вредные привычки':
+            bad_habits = new_value
+        else:
+            bot.send_message(message.chat.id, 'Некорректное название поля. Анкета не изменена.')
+            cur.close()
+            conn.close()
+            return
+
+        # Обновление данных в базе данных
+        cur.execute("UPDATE users SET first_name=?, last_name=?, age=?, work_experience_age=?, rate=?, places_of_work=?, bad_habits=? WHERE id=?",
+                    (first_name, last_name, age, work_experience_age, rate, places_of_work, bad_habits, user_id))
+        conn.commit()
+
+        bot.send_message(message.chat.id, 'Анкета успешно изменена!')
+
+        # Отправка обновленной анкеты определенному пользователю
+        target_user_id = user[1]
+        bot.send_message(target_user_id, f'Ваша анкета была обновлена:\n'
+                                         f'Имя: {first_name}\n'
+                                         f'Фамилия: {last_name}\n'
+                                         f'Возраст: {age}\n'
+                                         f'Стаж работы: {work_experience_age}\n'
+                                         f'Рейтинг: {rate}\n'
+                                         f'Места работы: {places_of_work}\n'
+                                         f'Вредные привычки: {bad_habits}')
+
+        # Отправка обновленной анкеты другим пользователям
+        for target_user in target_users:
+            bot.send_message(target_user, f'Измененная анкета от пользователя {first_name} {last_name}:\n'
+                                          f'Возраст: {age}\n'
+                                          f'Стаж работы: {work_experience_age}\n'
+                                          f'Рейтинг: {rate}\n'
+                                          f'Места работы: {places_of_work}\n'
+                                          f'Вредные привычки: {bad_habits}')
+
+    else:
+        bot.send_message(message.chat.id, 'Данные пользователя не найдены')
+
+    cur.close()
+    conn.close()
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
