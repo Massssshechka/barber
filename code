@@ -1,240 +1,1750 @@
 import telebot
-import sqlite3
 from telebot import types
+import sqlite3
+import smtplib
+import requests
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-bot = telebot.TeleBot('5814634251:AAFS0f5noql7q2NUjM4fHEN7wAV7fC-UCN4')
+TOKEN = '6005978934:AAEoKVufiGSI7O51GJRjLdRsBnMJhJGlp_A'
 
-target_users = ['893499566']
+bot = telebot.TeleBot(TOKEN)
 
-@bot.message_handler(commands=['start'])
+conn = sqlite3.connect('base.bd', check_same_thread=False)
+cur = conn.cursor()
+
+cur.execute(
+   'CREATE TABLE IF NOT EXISTS jobs (id integer,'  # unique
+   'specialisation varchar(100), experience varchar(50), place_name varchar(50),'
+   ' place varchar(50), metro varchar(50), job_time varchar(50),'
+   ' money_hour integer(10), likes varchar, chosen varchar, marked varchar, mark_n integer, review_n int)')
+# cur.execute("DELETE FROM jobs WHERE id=1")
+# cur.execute('UPDATE jobs SET marked=? WHERE id=97124558', ('0',))
+#cur.execute('UPDATE jobs SET likes=? WHERE id=1', ('0,97124558',))
+conn.commit()
+
+cur.execute(
+   'CREATE TABLE IF NOT EXISTS workers (id integer, name varchar(50), age integer(2),'
+   ' specialisation varchar(100), experience varchar(50), job_time varchar(50),'
+   ' money_hour integer(10), adress varchar(100), likes varchar, chosen varchar, marked varchar, mark_n integer, review_n int)')
+#cur.execute('UPDATE workers SET likes=? WHERE id=97124558', ('0,1',))
+# cur.execute("DELETE FROM workers WHERE id=101")
+conn.commit()
+
+cur.execute(
+   'CREATE TABLE IF NOT EXISTS reviews (id_reviewed integer, id_reviewer integer, mark integer, review varchar(500))')
+conn.commit()
+
+cur.execute(
+   'CREATE TABLE IF NOT EXISTS money (number integer, job_m integer, job_n integer, worker_m integer, worker_n integer)')
+# cur.execute('UPDATE money SET job_m=13, job_n=3 WHERE number=1')
+conn.commit()
+
+# cur.execute('INSERT INTO money (number, job_m, job_n, worker_m, worker_n) VALUES(?1, ?2, ?3, ?4, ?5)', (1, 13, 3, 15, 3))
+# conn.commit()
+cur.close()
+
+
+def get_vacancies(params):
+   response = requests.get('https://api.hh.ru/vacancies', params=params)
+   vacancies = response.json()['items']
+   # форматирование строки с вакансиями и зарплатами
+   vacancies_text = ''
+   for vacancy in vacancies:
+       name = vacancy['name']
+       salary = vacancy['salary']
+       if salary:
+           salary_from = salary['from']
+           salary_to = salary['to']
+           currency = salary['currency']
+           if salary_from and salary_to:
+               vacancy_salary = f"{salary_from}-{salary_to} {currency}"
+           elif salary_from:
+               vacancy_salary = f"от {salary_from} {currency}"
+           elif salary_to:
+               vacancy_salary = f"до {salary_to} {currency}"
+           else:
+               vacancy_salary = "не указана"
+       else:
+           vacancy_salary = "не указана"
+       vacancies_text += f"{name}, зарплата: {vacancy_salary}\n"
+   return vacancies_text
+
+
+@bot.message_handler(commands=['start', 'начать'])
 def start(message):
-    conn = sqlite3.connect('bd.sqlite3')
-    cur = conn.cursor()
+   registr = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)  # кнопка
+   button = types.KeyboardButton('Зарегистрироваться')  # последнее - id кнопки
+   registr.add(button)  # добавляем кнопку к созданному "окну" registr
+   bot.send_message(message.chat.id, 'Здравствуйте! Этот бот помогает устроиться на работу'
+                                     ' или найти работника в свой барбершоп в Москве.'
+                                     ' Если вы хотите зарегистрироваться, нажмите на кнопку'
+                                     ' или напишите "Зарегистрироваться"',
+                    parse_mode='html', reply_markup=registr)
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegram_id INT,
-        first_name TEXT, 
-        last_name TEXT, 
-        age INT, 
-        work_experience_age INT, 
-        rate INT, 
-        places_of_work TEXT, 
-        bad_habits TEXT)""")
-    conn.commit()
+@bot.message_handler(commands=['offer_vacancies'])
+def offer_vacancies(message):
+   def smt():
+       keywords = message.text.split()[1:]
+       if keywords:
+           keywords = "+".join(keywords)
+           params = {'text': keywords, 'area': '1'}
+           vacancies_text = get_vacancies(params)
+           bot.send_message(message.chat.id, f"Вакансии по запросу '{keywords}':\n{vacancies_text}")
+       else:
+           bot.send_message(message.chat.id,
+                            "Укажите вакансию, которую Вы хотите найти (парикмахер, колорист, стилист или специалист по плетению):")
+           bot.register_next_step_handler(message, process_offer)
 
-    cur.execute("INSERT INTO users (telegram_id) VALUES (?)", (message.chat.id,))
-    conn.commit()
-    user_id = cur.lastrowid
+   def process_offer(message):
+       markup = types.InlineKeyboardMarkup()
+       markup.add(types.InlineKeyboardButton("Предложение вакансий", callback_data='offer'))
 
-    cur.close()
-    conn.close()
+       bot.send_message(message.chat.id, 'Нажмите на кнопку, чтобы получить информацию о предложенной вакансии!  ',
+                        reply_markup=markup)
 
-    bot.send_message(message.chat.id, 'Привет! Введите свое имя')
-    bot.register_next_step_handler(message, user_first_name, user_id)
+   smt()
 
-def user_first_name(message, user_id):
-    first_name = message.text.strip()
-    bot.send_message(message.chat.id, 'Введите свою фамилию')
-    bot.register_next_step_handler(message, user_last_name, user_id, first_name)
-
-def user_last_name(message, user_id, first_name):
-    last_name = message.text.strip()
-    bot.send_message(message.chat.id, 'Введите свой возраст')
-    bot.register_next_step_handler(message, user_age, user_id, first_name, last_name)
-
-def user_age(message, user_id, first_name, last_name):
-    age = message.text.strip()
-    bot.send_message(message.chat.id, 'Введите стаж работы')
-    bot.register_next_step_handler(message, user_work_experience_age, user_id, first_name, last_name, age)
-
-def user_work_experience_age(message, user_id, first_name, last_name, age):
-    work_experience_age = message.text.strip()
-    rate = (int(work_experience_age) + int(age)) / 10
-    bot.send_message(message.chat.id, 'Введите места, в которых Вы работали')
-    bot.register_next_step_handler(message, user_places_of_work, user_id, first_name, last_name, age, work_experience_age, rate)
-
-def user_places_of_work(message, user_id, first_name, last_name, age, work_experience_age, rate):
-    places_of_work = message.text.strip()
-    bot.send_message(message.chat.id, 'Введите свои вредные привычки, если их нет, то напишите: "Вредных привычек нет"')
-    bot.register_next_step_handler(message, user_bad_habits, user_id, first_name, last_name, age, work_experience_age, rate, places_of_work)
-
-def user_bad_habits(message, user_id, first_name, last_name, age, work_experience_age, rate, places_of_work):
-    bad_habits = message.text.strip()
-
-    conn = sqlite3.connect('bd.sqlite3')
-    cur = conn.cursor()
-
-    cur.execute(
-        "UPDATE users SET first_name=?, last_name=?, age=?, work_experience_age=?, rate=?, places_of_work=?, bad_habits=? WHERE id=?",
-        (first_name, last_name, age, work_experience_age, rate, places_of_work, bad_habits, user_id))
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    for target_user in target_users:
-        bot.send_message(target_user, f'Новая анкета от пользователя {first_name} {last_name}:\n'
-                                      f'Возраст: {age}\n'
-                                      f'Стаж работы: {work_experience_age}\n'
-                                      f'Рейтинг: {rate}\n'
-                                      f'Места работы: {places_of_work}\n'
-                                      f'Вредные привычки: {bad_habits}')
-
-
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton('Ваша анкета', callback_data='users'))
-    markup.add(types.InlineKeyboardButton ("Изменить свою анкету", callback_data='change_profile'))
-    bot.send_message(message.chat.id, 'Вы зарегистрированы!', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'change_profile')
-def change_profile_callback(call):
-    bot.send_message(call.message.chat.id, 'Введите "update", чтобы изменить свою анкету:')
-    bot.register_next_step_handler(call.message, update_profile)
-
-def update_profile(message):
-    message.text = message.text.lower().capitalize()
-    conn = sqlite3.connect('bd.sqlite3')
-    cur = conn.cursor()
-
-    cur.execute(f"SELECT * FROM users WHERE telegram_id={message.chat.id}")
-    user = cur.fetchone()
-
-    if user:
-        # Извлечение информации о пользователе из базы данных
-        user_id = user[0]
-        first_name = user[2]
-        last_name = user[3]
-        age = user[4]
-        work_experience_age = user[5]
-        rate = user[6]
-        places_of_work = user[7]
-        bad_habits = user[8]
-
-        # Отправка сообщения с текущими данными пользователя и запрос на изменение полей
-        info = f'Текущая анкета:\n' \
-               f'Имя: {first_name}\n' \
-               f'Фамилия: {last_name}\n' \
-               f'Возраст: {age}\n' \
-               f'Стаж работы: {work_experience_age}\n' \
-               f'Рейтинг: {rate}\n' \
-               f'Места, в которых вы работали: {places_of_work}\n' \
-               f'Вредные привычки: {bad_habits}\n\n' \
-               f'Введите новые данные, используя следующий формат:\n' \
-               f'Имя: <Новое имя>\n' \
-               f'Фамилия: <Новая фамилия>\n' \
-               f'Возраст: <Новый возраст>\n' \
-               f'Стаж работы: <Новый стаж работы>\n' \
-               f'Места работы: <Новые места работы>\n' \
-               f'Вредные привычки: <Новые вредные привычки>'
-        bot.send_message(message.chat.id, info)
-        bot.register_next_step_handler(message, process_update, user_id)
-    else:
-        bot.send_message(message.chat.id, 'Данные пользователя не найдены')
-
-    cur.close()
-    conn.close()
-
-def process_update(message, user_id):
-    update_data = message.text.strip().lower().split(':')
-    field = update_data[0].strip()
-    new_value = update_data[1].strip()
-    new_value = new_value.capitalize()
-
-    conn = sqlite3.connect('bd.sqlite3')
-    cur = conn.cursor()
-
-    cur.execute(f"SELECT * FROM users WHERE id={user_id}")
-    user = cur.fetchone()
-
-    if user:
-        first_name = user[2]
-        last_name = user[3]
-        age = user[4]
-        work_experience_age = user[5]
-        rate = user[6]
-        places_of_work = user[7]
-        bad_habits = user[8]
-
-        # Обновление выбранного поля анкеты пользователя
-        if field == 'имя':
-            first_name = new_value
-        elif field == 'фамилия':
-            last_name = new_value
-        elif field == 'возраст':
-            age = new_value
-        elif field == 'стаж работы':
-            work_experience_age = new_value
-            rate = (int(work_experience_age) + int(age)) / 10
-        elif field == 'места работы':
-            places_of_work = new_value
-        elif field == 'вредные привычки':
-            bad_habits = new_value
-        else:
-            bot.send_message(message.chat.id, 'Некорректное название поля. Анкета не изменена.')
-            cur.close()
-            conn.close()
-            return
-
-        # Обновление данных в базе данных
-        cur.execute("UPDATE users SET first_name=?, last_name=?, age=?, work_experience_age=?, rate=?, places_of_work=?, bad_habits=? WHERE id=?",
-                    (first_name, last_name, age, work_experience_age, rate, places_of_work, bad_habits, user_id))
-        conn.commit()
-
-        bot.send_message(message.chat.id, 'Анкета успешно изменена!')
-
-        # Отправка обновленной анкеты определенному пользователю
-        target_user_id = user[1]
-        bot.send_message(target_user_id, f'Ваша анкета была обновлена:\n'
-                                         f'Имя: {first_name}\n'
-                                         f'Фамилия: {last_name}\n'
-                                         f'Возраст: {age}\n'
-                                         f'Стаж работы: {work_experience_age}\n'
-                                         f'Рейтинг: {rate}\n'
-                                         f'Места работы: {places_of_work}\n'
-                                         f'Вредные привычки: {bad_habits}')
-
-        # Отправка обновленной анкеты другим пользователям
-        for target_user in target_users:
-            bot.send_message(target_user, f'Измененная анкета от пользователя {first_name} {last_name}:\n'
-                                          f'Возраст: {age}\n'
-                                          f'Стаж работы: {work_experience_age}\n'
-                                          f'Рейтинг: {rate}\n'
-                                          f'Места работы: {places_of_work}\n'
-                                          f'Вредные привычки: {bad_habits}')
-
-    else:
-        bot.send_message(message.chat.id, 'Данные пользователя не найдены')
-
-    cur.close()
-    conn.close()
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    conn = sqlite3.connect('bd.sqlite3')
-    cur = conn.cursor()
-
-    cur.execute(f"SELECT * FROM users WHERE telegram_id={call.message.chat.id}")
-    user = cur.fetchone()
-
-    if user:
-        info = f'Имя: {user[2]}\nФамилия: {user[3]}\nВозраст: {user[4]}\nСтаж работы: {user[5]}\nВаш рейтинг: {user[6]}\nМеста, в которых вы работали: {user[7]}\nВредные привычки: {user[8]}'
-        bot.send_message(call.message.chat.id, info)
-    else:
-        bot.send_message(call.message.chat.id, 'Данные пользователя не найдены')
-
-    cur.close()
-    conn.close()
-
-@bot.message_handler(commands=['help'])
-def help(message):
-    bot.send_message(message.chat.id, ' ', parse_mode='html')
 
 @bot.message_handler()
-def get_user_text(message):
-    if message.text.strip():
-        bot.send_message(message.chat.id, 'Прости, я тебя не понимаю', parse_mode='html')
-    else:
-        bot.send_message(message.chat.id, 'Вы отправили пустое сообщение')
+def registration(message):
+   menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)  # кнопка
+   button3 = types.KeyboardButton("Меню")
+   menu.add(button3)
+   reg = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)  # кнопка
+   button = types.KeyboardButton('Зарегистрироваться')
+   reg.add(button)
+
+   if (message.text == "Привет!"):
+       bot.send_message(message.chat.id, text="Привет! Спасибо, что заглянул ко мне!", reply_markup=menu)
+   elif (message.text == "Задать вопрос"):
+       markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+       btn1 = types.KeyboardButton("Что нужно знать для стилиста?")
+       btn2 = types.KeyboardButton("Что нужно знать для колориста?")
+       btn3 = types.KeyboardButton("Что нужно знать для парикмахера?")
+       btn4 = types.KeyboardButton("Что нужно знать для специалиста по плетению?")
+       btn5 = types.KeyboardButton("Меню")
+       markup.add(btn1, btn2, btn3, btn4, btn5)
+       bot.send_message(message.chat.id, text="Вы можете задать мне вопрос.", reply_markup=markup)
+
+   elif (message.text == "Что нужно знать для стилиста?"):
+
+       keyboard = types.InlineKeyboardMarkup()
+       url_btn = types.InlineKeyboardButton (text="Stylish", url= "https://www.salonsecret.ru/for-hairdressers/pochty-volshebnyk-vse-o-professyy-parykmacher-stylyst")
+       keyboard.add(url_btn)
+
+       bot.send_message(message.chat.id, text="Стилист — это человек, который занимается созданием образов для клиентов, "
+                                         "индивидуального имиджа. Он должен подобрать такую причёску и стиль, которые бы удачно"
+                                         "замаскировали недостатки, но выгодно выделили достоинства во внешности.", reply_markup=keyboard)
+
+   elif (message.text == "Что нужно знать для колориста?"):
+
+       keyboard = types.InlineKeyboardMarkup()
+       url_btn = types.InlineKeyboardButton(text="Colourist",
+                                            url="https://www.salonsecret.ru/for-hairdressers/parikmaher-kolorist-sekrety-professii")
+       keyboard.add(url_btn)
+       bot.send_message(message.chat.id, text="Колорист — мастер, который занимается окрашиванием волос в нужный цвет. "
+                                              "Знает достоинства и недостатки всех красок, включая новые, особенности "
+                                              "подбора оттенков и технологии колорирования.", reply_markup=keyboard)
+
+   elif (message.text == "Что нужно знать для парикмахера?"):
+
+       keyboard = types.InlineKeyboardMarkup()
+       url_btn = types.InlineKeyboardButton(text="Hairdresser",
+                                            url="https://www.salonsecret.ru/for-hairdressers/professyia-parykmacher-ot-cyriulnyka-do-top-stylysta")
+       keyboard.add(url_btn)
+       bot.send_message(message.chat.id, text= "Парикмахер - специалист, занимающийся созданием прически в самом широком смысле "
+                                         "этого слова. Он занимается стрижкой, укладкой, завивкой волос - словом, "
+                                         "применяет все известные технологии для создания наилучшего образа клиента. "
+                                         "Искусство парикмахера сравнивается с работой художника: настоящий мастер имеет "
+                                         "безупречный вкус.", reply_markup=keyboard)
+
+   elif (message.text == "Что нужно знать для специалиста по плетению?"):
+
+       keyboard = types.InlineKeyboardMarkup()
+       url_btn = types.InlineKeyboardButton(text="Weaving",
+                                            url="https://mycalling.ru/brejder.html")
+       keyboard.add(url_btn)
+       bot.send_message(message.chat.id, "Специалист по плетению — данный парикмахер занимается созданием причесок методом "
+                                         "плетения косичек. Это могут быть дреды, афро-косы, простые косички, модные свадебные"
+                                         "и выпускные сложные прически с элементами плетения.", reply_markup=keyboard)
+
+   elif message.text == 'Зарегистрироваться' or message.text == 'зарегистрироваться':
+       cur = conn.cursor()
+       cur.execute("SELECT id FROM workers WHERE id = ?", (message.chat.id,))
+       if cur.fetchone() is None:
+           cur.execute("SELECT id FROM jobs WHERE id = ?", (message.chat.id,))
+           if cur.fetchone() is None:
+               who = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True, one_time_keyboard=True)  # кнопка
+               button1 = types.KeyboardButton('Работодатель')  # последнее - id кнопки
+               button2 = types.KeyboardButton("Работник")
+               who.add(button1, button2)
+               bot.send_message(message.chat.id, 'Напишите, кто вы, или нажмите на соответствующую кнопку:',
+                                reply_markup=who)
+           else:
+               bot.send_message(message.chat.id, 'Вы уже зарегистрированы', reply_markup=menu)
+       else:
+           bot.send_message(message.chat.id, 'Вы уже зарегистрированы', reply_markup=menu)
+       cur.close()
+   elif message.text == 'Работодатель' or message.text == 'работодатель':
+       cur = conn.cursor()
+       cur.execute("SELECT id FROM workers WHERE id = ?", (message.chat.id,))
+       if cur.fetchone() is None:
+           cur.execute("SELECT id FROM jobs WHERE id = ?", (message.chat.id,))
+           if cur.fetchone() is None:
+               id = message.chat.id
+
+               def firstly(message):
+                   bot.send_message(message.chat.id, 'Напишите, какого именно специалиста вы ищете:'
+                                                     ' женский или мужской парикмахер, колорист,'
+                                                     ' стилист, специалист по плетению,'
+                                                     ' универсальный(можно написать несколько'
+                                                     ' через запятую) ')
+                   bot.register_next_step_handler(message, user_experience_needed)
+
+               def user_experience_needed(message):
+                   global specialisation_needed
+                   specialisation_needed = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите желаемый опыт работы')
+                   bot.register_next_step_handler(message, user_place_name)
+
+               def user_place_name(message):
+                   global experience_needed
+                   experience_needed = message.text.strip()
+                   if experience_needed.isdigit() and int(experience_needed)>=0 and int(experience_needed)<100:
+                       bot.send_message(message.chat.id, 'Напишите название вашего барбершопа/'
+                                                     'парикмахерской/салона красоты')
+                       bot.register_next_step_handler(message, user_place)
+                   else:
+                       bot.send_message(message.chat.id, 'Неверный тип данных. Введите желаемый опыт работы заново')
+                       bot.register_next_step_handler(message, user_place_name)
+
+               def user_place(message):
+                   global place_name
+                   place_name = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите адрес')
+                   bot.register_next_step_handler(message, user_mail)
+
+               def user_mail(message):
+                   global place
+                   place= message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите вашу почту (Обязательно mail!). На нее будут приходить анкеты недавно зарегестрировавшихся работников')
+                   bot.register_next_step_handler(message, user_job_time)
+
+               def user_job_time(message):
+                   global mail
+                   mail = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите занятость: полная, частичная или любая')
+                   bot.register_next_step_handler(message, user_money)
+
+
+               def user_money(message):
+                   global job_time
+                   job_time = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите заработную плату за час в рублях')
+                   bot.register_next_step_handler(message, final)
+
+               def final(message):
+                   money_hour = message.text.strip()
+                   if money_hour.isdigit() and int(money_hour)>0 and int(money_hour)<10000000:
+                       cur = conn.cursor()
+                       cur.execute('SELECT * FROM money WHERE number=?', (1,))
+                       cf = cur.fetchone()
+                       j_m = cf[1] + int(money_hour)
+                       j_n = cf[2] + 1
+                       cur.execute('UPDATE money SET job_m=?, job_n=? WHERE number=?', (j_m, j_n, 1))
+                       conn.commit()
+                       cur.execute(
+                       'INSERT INTO jobs(id, specialisation, experience, place_name, place, metro, job_time,'
+                       ' money_hour, likes, chosen, marked, mark_n, review_n)  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);',
+                       (id, specialisation_needed,
+                        experience_needed, place_name, place, mail,
+                        job_time, money_hour, "0", "0", "0", 0, 0))
+                       conn.commit()
+                       cur.close()
+                       bot.send_message(message.chat.id, 'Вы зарегестрированы',
+                                    reply_markup=menu)
+                   else:
+                       bot.send_message(message.chat.id, 'Неверный тип данных. Введите заработную плату за час в рублях заново')
+                       bot.register_next_step_handler(message, final)
+
+               firstly(message)
+           else:
+               bot.send_message(message.chat.id, 'Вы уже зарегистрированы как работодатель.'
+                                                 ' Если хотите изменить анкету, напишите:"'
+                                                 'Редактировать анкету"', reply_markup=menu)
+       else:
+           bot.send_message(message.chat.id, 'Вы уже зарегистрированы как работник. Если '
+                                             'хотите зарегистрироваться как работодатель,'
+                                             ' удалите анкету (напишите: "удалить анкету")'
+                                             ' и нажмите/напишите "Зарегистрироваться"', reply_markup=menu)
+       cur.close()
+
+   elif message.text == 'Работник' or message.text == 'работник':
+       cur = conn.cursor()
+       cur.execute("SELECT id FROM workers WHERE id = ?", (message.chat.id,))
+       if cur.fetchone() is None:
+           cur.execute("SELECT id FROM jobs WHERE id = ?", (message.chat.id,))
+           if cur.fetchone() is None:
+               id = message.chat.id
+
+               def first(message):
+                   bot.send_message(message.chat.id, 'Напишите ваши имя и фамилию')
+                   bot.register_next_step_handler(message, user_age)
+
+               def user_age(message):
+                   global name
+                   name = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите ваш возраст')
+                   bot.register_next_step_handler(message, user_specialisation)
+
+               def user_specialisation(message):
+                   global age
+                   age = message.text.strip()
+                   if age.isdigit() and int(age)>=16 and int(age)<100:
+                       bot.send_message(message.chat.id, 'Напишите, каким специалистом вы являетесь:'
+                                                     ' женский или мужской парикмахер, колорист,'
+                                                     ' стилист, специалист по плетению,'
+                                                     ' универсальный(можно написать несколько'
+                                                     ' через запятую) ')
+                       bot.register_next_step_handler(message, user_experience)
+                   else:
+                       bot.send_message(message.chat.id, 'Неверный тип данных. Введите ваш возраст заново(число от 16 до 100) ')
+                       bot.register_next_step_handler(message, user_specialisation)
+
+               def user_experience(message):
+                   global specialisation
+                   specialisation = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите ваш опыт работы')
+                   bot.register_next_step_handler(message, user_home)
+
+               def user_home(message):
+                   global experience
+                   experience = message.text.strip()
+                   if experience.isdigit() and int(experience)>=0 and int(experience)<100:
+                       bot.send_message(message.chat.id, 'Укажите ваш адрес(или поставьте прочерк(-))')
+                       bot.register_next_step_handler(message, user_job_time)
+                   else:
+                       bot.send_message(message.chat.id, 'Неправильный тип данных. Напишите ваш опыт работы заново(число от 0 до 100)')
+                       bot.register_next_step_handler(message, user_home)
+
+
+               def user_job_time(message):
+                   global adress
+                   adress = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите занятость: полная, частичная или любая')
+                   bot.register_next_step_handler(message, user_money)
+
+               def user_money(message):
+                   global job
+                   job = message.text.strip()
+                   bot.send_message(message.chat.id, 'Укажите желаемую заработную плату за час в рублях')
+                   bot.register_next_step_handler(message, final)
+
+               def final(message):
+                   money = message.text.strip()
+                   if money.isdigit() and int(money)>0 and int(money)<10000000:
+                       cur = conn.cursor()
+                       cur.execute('SELECT * FROM money WHERE number=?', (1,))
+                       cf = cur.fetchone()
+                       w_m = cf[3] + int(money)
+                       w_n = cf[4] + 1
+                       cur.execute('UPDATE money SET worker_m=?, worker_n=? WHERE number=?', (w_m, w_n, 1))
+                       conn.commit()
+                       cur.execute(
+                       'INSERT INTO workers (id, name, age, specialisation, experience, job_time,'
+                       ' money_hour, adress, likes, chosen, marked, mark_n, review_n)  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);',
+                       (id, name, age, specialisation,
+                        experience, job, money,
+                        adress, "0", "0", "0", 0, 0))
+                       conn.commit()
+                       bot.send_message(message.chat.id, 'Вы зарегистрированы',
+                                        reply_markup=menu)
+
+                       cur.execute('SELECT * FROM jobs')
+                       rows = cur.fetchall()
+                       for row in rows:
+                           msg = MIMEMultipart()
+                           mess = "Dear employer, \n\nYou have a new profile submission on the job portal.\n\nBest regards,\nThe RectorBot"
+                       # setup the parameters of the message
+                           password = "XemhQ8AutgMqi2gWLr7G"
+                           msg['From'] = "rector.bot@mail.ru"
+                           msg['To'] = row[5]
+                           msg['Subject'] = "New profil submission"
+                       # add in the message body
+                           msg.attach(MIMEText(mess, 'plain'))
+                       # create server
+                           server = smtplib.SMTP('smtp.mail.ru: 587')
+                           server.starttls()
+                       # Login Credentials for sending the mail
+                           server.login(msg['From'], password)
+                       # send the message via the server.
+                           server.sendmail(msg['From'], msg['To'], msg.as_string())
+                           server.quit()
+                       cur.close()
+
+                   else:
+                       bot.send_message(message.chat.id,
+                                        'Неправильный тип данных. Напишите сумму желаемой зарплаты заново(только число)')
+                       bot.register_next_step_handler(message, final)
+
+               first(message)
+
+           else:
+               bot.send_message(message.chat.id, 'Вы уже зарегистрированы как работодатель. '
+                                                 'Если хотите зарегистрироваться как работник, '
+                                                 'удалите анкету (напишите: "удалить анкету")'
+                                                 ' и нажмите/напшите "Зарегистрироваться"', reply_markup=menu)
+       else:
+           bot.send_message(message.chat.id, 'Вы уже зарегистрированы как работник. Если хотите'
+                                             ' изменить свою анкету, напишите: "Редактировать анкету"',
+                            reply_markup=menu)
+       cur.close()
+
+   # def removal(message):
+   elif message.text == 'Удалить анкету' or message.text == 'удалить анкету':
+       removal = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True, one_time_keyboard=True)  # кнопка
+       button1 = types.KeyboardButton('Да, удалить')
+       button2 = types.KeyboardButton("Не удалять")
+       removal.add(button1, button2)
+       bot.send_message(message.chat.id, 'Вы уверены, что хотите удалить анкету?', reply_markup=removal)
+   elif message.text == "Да, удалить":
+       cur = conn.cursor()
+       cur.execute('SELECT money_hour FROM jobs WHERE id=?', (message.chat.id,))
+       money = cur.fetchone()
+       if money is None:
+           cur.execute('SELECT money_hour FROM workers WHERE id=?', (message.chat.id,))
+           money1 = cur.fetchone()
+           if money1 is None:
+               bot.send_message(message.chat.id, "Анкеты не существует", reply_markup=reg)
+           else:
+               cur.execute('SELECT * FROM money WHERE number=?', (1,))
+               cf = cur.fetchone()
+               w_m = cf[3] - money1[0]
+               w_n = cf[4] - 1
+               cur.execute('UPDATE money SET worker_m=?, worker_n=? WHERE number=?', (w_m, w_n, 1))
+               conn.commit()
+               bot.send_message(message.chat.id, 'Анкета удалена', reply_markup=reg)
+       else:
+           cur.execute('SELECT * FROM money WHERE number=?', (1,))
+           cf = cur.fetchone()
+           j_m = cf[1] - money[0]
+           j_n = cf[2] - 1
+           cur.execute('UPDATE money SET job_m=?, job_n=? WHERE number=?', (j_m, j_n, 1))
+           conn.commit()
+           bot.send_message(message.chat.id, 'Анкета удалена', reply_markup=reg)
+       cur.execute('DELETE FROM jobs WHERE id=?;', (message.chat.id,))
+       cur.execute('DELETE FROM workers WHERE id=?;', (message.chat.id,))
+       conn.commit()
+       cur.close()
+   elif message.text == "Не удалять":
+       cur = conn.cursor()
+       cur.execute('SELECT money_hour FROM jobs WHERE id=?', (message.chat.id,))
+       money = cur.fetchone()
+       if money is None:
+           cur.execute('SELECT money_hour FROM workers WHERE id=?', (message.chat.id,))
+           money1 = cur.fetchone()
+           if money1 is None:
+               bot.send_message(message.chat.id, "Анкеты не существует", reply_markup=reg)
+           else:
+               bot.send_message(message.chat.id, "Анкета не удалена", reply_markup=menu)
+       else:
+           bot.send_message(message.chat.id, "Анкета не удалена", reply_markup=menu)
+       cur.close()
+
+   # def bot_menu(message):
+   elif message.text == 'Меню' or message.text == 'меню':
+       functions = types.ReplyKeyboardMarkup(row_width=3, resize_keyboard=True, one_time_keyboard=True)
+       button_change = types.KeyboardButton('Изменить анкету')
+       button_delete = types.KeyboardButton('Удалить анкету')
+       button_my_profile = types.KeyboardButton('Моя анкета')
+       button_viewing = types.KeyboardButton('Просмотр анкет')
+       button_rating = types.KeyboardButton('Оценить')
+       button_chosen = types.KeyboardButton('Избранное')
+       button_q = types.KeyboardButton('Задать вопрос')
+       functions.add(button_change, button_delete, button_my_profile, button_viewing, button_rating, button_chosen, button_q)
+       text ='Оценить - вы можете поставить оценку пользователю, с которым вы пообщались(если оба нажали на кнопку нравится)\n' \
+              'Задать вопрос - можно узнать полезные вещи, связанные с профессией' \
+              '\n/offer_vacancies - показывает вакансии' \
+              '\n/start - запускает бот'
+       bot.send_message(message.chat.id, text, reply_markup=functions)
+
+   elif message.text == "Моя анкета":
+       cur = conn.cursor()
+       cur.execute("SELECT id FROM workers WHERE id = ?", (message.chat.id,))
+       if cur.fetchone() is None:
+           cur.execute("SELECT id FROM jobs WHERE id = ?", (message.chat.id,))
+           if cur.fetchone() is None:
+               bot.send_message(message.chat.id, 'Вы не зарегистрированы', reply_markup=reg)
+           else:
+               cur.execute('SELECT specialisation, experience, place_name,'
+                           ' place, job_time, money_hour, mark_n, review_n FROM jobs WHERE id=?;', (message.chat.id,))
+               row = cur.fetchone()
+               cur.execute("SELECT * FROM money WHERE number=?", (1,))
+               money_all = cur.fetchone()
+               pay = money_all[1]
+               pay_p = money_all[2]
+               pay /= pay_p
+               specialisation_value = row[0]
+               experience_value = row[1]
+               place_name_value = row[2]
+               place_value = row[3]
+               job_time_value = row[4]
+               money_hour_value = row[5]
+               if row[7]==0:
+                   rate1='*Рейтинг: -*\n'
+               else:
+                   k=row[6]/row[7]
+                   rate1 = '*Рейтинг: {}*\n'.format(k)
+               if pay >= money_hour_value:
+                   pay1 = 'меньше'
+               else:
+                   pay1 = 'больше'
+               keyboard_my=types.InlineKeyboardMarkup()
+               my_rev=types.InlineKeyboardButton('Отзывы', callback_data='ответ' + str(message.chat.id))
+               keyboard_my.add(my_rev)
+               bot.send_message(message.chat.id, rate1+'Специализация: {}\n'
+                                                 'Желаемый опыт работы(лет): {}\n'
+                                                 'Название места: {}\n'
+                                                 'Адрес: {}\n'
+                                                 'Занятость: {}\n'
+                                                 'Оплата в час: {}\n'
+                                                 '_Зарплата {} среднего_\n'.format(specialisation_value,
+                                                                                   experience_value, place_name_value,
+                                                                                   place_value, job_time_value,
+                                                                                   money_hour_value, pay1),
+                                parse_mode="Markdown", reply_markup=keyboard_my)
+
+       else:
+           cur.execute('SELECT name, age, specialisation, experience, job_time,'
+                       ' money_hour, mark_n, review_n FROM workers WHERE id=?;', (message.chat.id,))
+           row = cur.fetchone()
+           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+           money_all = cur.fetchone()
+           pay = money_all[3]
+           pay_p = money_all[4]
+           pay /= pay_p
+           name_value = row[0]
+           age_value = row[1]
+           specialisation_value = row[2]
+           experience_value = row[3]
+           job_time_value = row[4]
+           money_hour_value = row[5]
+           if row[7] == 0:
+               rate1 = '*Рейтинг: -*\n'
+           else:
+               k = row[6] / row[7]
+               rate1 = '*Рейтинг: {}*\n'.format(k)
+           if pay >= money_hour_value:
+               pay1 = 'меньше'
+           else:
+               pay1 = 'больше'
+           keyboard_my = types.InlineKeyboardMarkup()
+           my_rev = types.InlineKeyboardButton('Отзывы', callback_data='ответ' + str(message.chat.id))
+           keyboard_my.add(my_rev)
+           bot.send_message(message.chat.id, rate1+'{}\n'
+                                             'Возраст: {}\n'
+                                             'Специализация: {}\n'
+                                             'Опыт работы(лет): {}\n'
+                                             'Занятость: {}\n'
+                                             'Желаемая оплата в час: {}\n'
+                                             '_Зарплата {} среднего_\n'.format(name_value, age_value,
+                                                                               specialisation_value,
+                                                                               experience_value, job_time_value,
+                                                                               money_hour_value, pay1),
+                            parse_mode="Markdown", reply_markup=keyboard_my)
+
+   elif message.text == "Изменить анкету" or message.text == "изменить анкету":
+       cur = conn.cursor()
+       cur.execute("SELECT * FROM jobs WHERE id=?", (message.chat.id,))
+       user = cur.fetchone()
+       cur.close()
+       if user is None:
+           cur = conn.cursor()
+           cur.execute("SELECT * FROM workers WHERE id=?", (message.chat.id,))
+           user = cur.fetchone()
+           cur.close()
+           if user is None:
+               bot.send_message(message.chat.id, 'Вы не зарегистрированы', reply_markup=reg)
+               cur.close()
+           else:
+               def update_profile1(message):
+                   name2 = user[1]
+                   age2 = user[2]
+                   specialisation2 = user[3]
+                   experience2 = user[4]
+                   job_time2 = user[5]
+                   money_hour2 = user[6]
+                   info = 'Текущая анкета:\n' \
+                          '{}\n' \
+                          'Возраст: {}\n' \
+                          'Специализация: {}\n' \
+                          'Опыт работы(лет): {}\n' \
+                          'Занятость: {}\n' \
+                          'Желаемая оплата в час: {}\n\n' \
+                          'Введите новые данные, используя следующий формат:\n' \
+                          'Имя: <Новые имя и фамилия>\n' \
+                          'Возраст: <Новый возраст>\n' \
+                          'Специализация: <Новая специализация>\n' \
+                          'Опыт работы: <Новый опыт работы(лет)>\n' \
+                          'Занятость: <Новая занятость(полная, частичная, любая)>\n' \
+                          'Оплата в час: <Новая оплата в час>\n' \
+                          'Обратите внимание: за раз можно изменить только одно поле'
+                   bot.send_message(message.chat.id, info.format(name2, age2, specialisation2, experience2,
+                                                                 job_time2, money_hour2))
+                   bot.register_next_step_handler(message, process_update1)
+
+               def process_update1(message):
+                   update_data = message.text.strip().split(':')
+                   field = update_data[0].strip()
+                   if len(update_data) != 2:
+                       bot.send_message(message.chat.id, 'Неправильный запрос. Анкета не изменена.')
+                   else:
+                       new_value = update_data[1].strip()
+
+                       # Обновление выбранного поля анкеты пользователя
+                       cur = conn.cursor()
+                       if field == 'специализация' or field == 'Cпециализация':
+                           specialisation2 = new_value
+                           cur.execute("UPDATE workers SET specialisation=? WHERE id=?",
+                                       (specialisation2, message.chat.id))
+                           bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                       elif field == 'имя' or field == 'Имя':
+                           name2 = new_value
+                           cur.execute("UPDATE workers SET name=? WHERE id=?", (name2, message.chat.id))
+                           bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                       elif field == 'возраст' or field == 'Возраст':
+                           age2 = new_value
+                           if age2.isdigit() and int(age2)>=16 and int(age2)<100:
+                               cur.execute("UPDATE workers SET age=? WHERE id=?", (age2, message.chat.id))
+                               bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                           else:
+                               bot.send_message(message.chat.id, 'Неправильный формат данных. Анкета не изменена', reply_markup=menu)
+                       elif field == 'опыт работы' or field == 'Опыт работы':
+                           experience2 = new_value
+                           if experience2.isdigit() and int(experience2) >= 0 and int(experience2) < 100:
+                               cur.execute("UPDATE workers SET experience=? WHERE id=?", (experience2, message.chat.id))
+                               bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                           else:
+                               bot.send_message(message.chat.id, 'Неправильный формат данных. Анкета не изменена',
+                                                reply_markup=menu)
+                       elif field == 'занятость' or field == 'Занятость':
+                           job_time2 = new_value
+                           cur.execute("UPDATE workers SET job_time=? WHERE id=?", (job_time2, message.chat.id))
+                           bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                       elif field == 'оплата в час' or field == 'Оплата в час':
+                           money_hour2 = new_value
+                           if money_hour2.isdigit() and int(money_hour2) > 0 and int(money_hour2) < 10000000:
+                               cur.execute('SELECT money_hour FROM workers WHERE id=?', (message.chat.id,))
+                               money = cur.fetchone()[0]
+                               cur.execute('SELECT worker_m FROM money WHERE number=?', (1,))
+                               money0 = cur.fetchone()[0]
+                               money0 = money0 - money + int(money_hour2)
+                               cur.execute("UPDATE money SET worker_m=? WHERE number=?", (money0, 1))
+                               conn.commit()
+                               cur.execute("UPDATE workers SET money_hour=? WHERE id=?", (money_hour2, message.chat.id))
+                               bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                           else:
+                               bot.send_message(message.chat.id, 'Неправильный формат данных. Анкета не изменена',
+                                                reply_markup=menu)
+                       else:
+                           bot.send_message(message.chat.id, 'Некорректное название поля. Анкета не изменена.',
+                                            reply_markup=menu)
+                       conn.commit()
+
+               update_profile1(message)
+           cur.close()
+
+       else:
+           def update_profile(message):
+               specialisation1 = user[1]
+               experience1 = user[2]
+               place_name1 = user[3]
+               place1 = user[4]
+               job_time1 = user[6]
+               money_hour1 = user[7]
+               info = 'Текущая анкета:\n' \
+                      'Специализация: {}\n' \
+                      'Желаемый опыт работы(лет): {}\n' \
+                      'Название места: {}\n' \
+                      'Адрес: {}\n' \
+                      'Занятость: {}\n' \
+                      'Оплата в час: {}\n\n' \
+                      'Введите новые данные, используя следующий формат:\n' \
+                      'Специализация: <Новая специализация>\n' \
+                      'Желаемый опыт работы(лет): <Новая желаемый опыт работы(лет)>\n' \
+                      'Название места: <Новое название места>\n' \
+                      'Адрес: <Новый Адрес>\n' \
+                      'Занятость: <Новая занятость(полная, частичная, любая)>\n' \
+                      'Оплата в час: <Новая оплата в час>\n' \
+                      'Обратите внимание: за раз можно изменить только одно поле'
+               bot.send_message(message.chat.id, info.format(specialisation1, experience1,
+                                                             place_name1, place1, job_time1, money_hour1))
+               bot.register_next_step_handler(message, process_update)
+
+           def process_update(message):
+               update_data = message.text.strip().split(':')
+               field = update_data[0].strip()
+               if len(update_data) != 2:
+                   bot.send_message(message.chat.id, 'Неправильный запрос. Анкета не изменена.')
+               else:
+                   new_value = update_data[1].strip()
+
+                   # Обновление выбранного поля анкеты пользователя
+                   cur = conn.cursor()
+                   if field == 'специализация' or field == 'Специализация':
+                       specialisation1 = new_value
+                       cur.execute("UPDATE jobs SET specialisation=? WHERE id=?", (specialisation1, message.chat.id))
+                       bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                   elif field == 'желаемый опыт работы' or field == 'Желаемый опыт работы':
+                       experience1 = new_value
+                       if experience1.isdigit() and int(experience1) >= 0 and int(experience1) < 100:
+                           cur.execute("UPDATE jobs SET experience=? WHERE id=?", (experience1, message.chat.id))
+                           bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                       else:
+                           bot.send_message(message.chat.id, 'Неправильный формат данных. Анкета не изменена', reply_markup=menu)
+                   elif field == 'название места' or field == 'Название места':
+                       place_name1 = new_value
+                       cur.execute("UPDATE jobs SET place_name=? WHERE id=?", (place_name1, message.chat.id))
+                       bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                   elif field == 'адрес' or field == 'Адрес':
+                       place1 = new_value
+                       cur.execute("UPDATE jobs SET place=? WHERE id=?", (place1, message.chat.id))
+                       bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                   elif field == 'занятость' or field == 'занятость':
+                       job_time1 = new_value
+                       cur.execute("UPDATE jobs SET job_time=? WHERE id=?", (job_time1, message.chat.id))
+                       bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                   elif field == 'оплата в час' or field == 'Оплата в час':
+                       money_hour1 = new_value
+                       if money_hour1.isdigit() and int(money_hour1) > 0 and int(money_hour1) < 10000000:
+                           cur.execute('SELECT money_hour FROM jobs WHERE id=?', (message.chat.id,))
+                           money = cur.fetchone()[0]
+                           cur.execute('SELECT job_m FROM money WHERE number=?', (1,))
+                           money0 = cur.fetchone()[0]
+                           money0 = money0 - money + int(money_hour1)
+                           cur.execute("UPDATE money SET job_m=? WHERE number=?", (money0, 1))
+                           conn.commit()
+                           cur.execute("UPDATE jobs SET money_hour=? WHERE id=?", (money_hour1, message.chat.id))
+                           bot.send_message(message.chat.id, 'Анкета успешно изменена!', reply_markup=menu)
+                       else:
+                           bot.send_message(message.chat.id, 'Неправильный формат данных. Анкета не изменена', reply_markup=menu)
+                   else:
+                       bot.send_message(message.chat.id, 'Некорректное название поля. Анкета не изменена.',
+                                        reply_markup=menu)
+                   conn.commit()
+
+           update_profile(message)
+       cur.close()
+
+   elif message.text == "Просмотр анкет" or message.text == "просмотр анкет":
+       cur = conn.cursor()
+       cur.execute('SELECT id FROM jobs WHERE id=?', (message.chat.id,))
+       if cur.fetchone() is None:
+           cur.execute('SELECT id FROM workers WHERE id=?', (message.chat.id,))
+           if cur.fetchone() is None:
+               bot.send_message(message.chat.id, 'Вы не зарегистрированы', reply_markup=reg)
+           else:
+               def display_form(t, offset):
+                   cur.execute('SELECT * FROM jobs LIMIT ?1 OFFSET ?2', (6, offset * 6))
+                   rows = cur.fetchall()
+                   cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                   money_all = cur.fetchone()
+                   pay = money_all[1]
+                   pay_p = money_all[2]
+                   pay /= pay_p
+                   keyboard = types.InlineKeyboardMarkup()
+                   giving_forms = ''
+                   for row in rows:
+                       id3 = row[0]
+                       specialisation3 = row[1]
+                       experience3 = row[2]
+                       place_name3 = row[3]
+                       place3 = row[4]
+                       job_time3 = row[6]
+                       money_hour3 = row[7]
+                       t += 1
+                       if pay >= money_hour3:
+                           pay1 = 'меньше'
+                       else:
+                           pay1 = 'больше'
+                       if row[12] == 0:
+                           rate1 = '*Рейтинг: -*\n'
+                       else:
+                           k = row[11] / row[12]
+                           rate1 = '*Рейтинг: {}*\n'.format(k)
+                       giving_form = '{}\n'.format(t)+ rate1 +'' \
+                                     'Специализация: {}\n' \
+                                     'Желаемый опыт работы(лет): {}\n' \
+                                     'Название места: {}\n' \
+                                     'Адрес: {}\n' \
+                                     'Занятость: {}\n' \
+                                     'Оплата в час: {}\n' \
+                                     '_Зарплата {} среднего_\n\n'.format(specialisation3, experience3, place_name3,
+                                                                         place3, job_time3, money_hour3, pay1)
+                       giving_forms += giving_form
+                       button = types.InlineKeyboardButton(str(t), callback_data="номер" + str(id3))
+                       keyboard.add(button)
+                   cur.execute("SELECT * FROM jobs LIMIT 1 OFFSET ?;", (t - 1,))
+                   if cur.fetchone() is not None:
+                       button_next = types.InlineKeyboardButton('Далее', callback_data='Далее0')
+                       keyboard.add(button_next)
+                   if giving_forms == '':
+                       giving_forms = "Нет анкет"
+                   bot.send_message(message.chat.id, giving_forms, parse_mode="Markdown", reply_markup=keyboard)
+                   offset += 1
+
+               display_form(0, 0)
+
+       else:
+           cur.execute('SELECT * FROM workers LIMIT ?1', (6,))
+           rows = cur.fetchall()
+           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+           money_all = cur.fetchone()
+           pay = money_all[3]
+           pay_p = money_all[4]
+           pay /= pay_p
+           keyboard = types.InlineKeyboardMarkup()
+           giving_forms = ''
+           t = 0
+           for row in rows:
+               id4 = row[0]
+               name4 = row[1]
+               age4 = row[2]
+               specialisation4 = row[3]
+               experience4 = row[4]
+               job_time4 = row[5]
+               money_hour4 = row[6]
+               t += 1
+               if pay >= money_hour4:
+                   pay1 = 'меньше'
+               else:
+                   pay1 = 'больше'
+               if row[12] == 0:
+                   rate1 = '*Рейтинг: -*\n'
+               else:
+                   k = row[11] / row[12]
+                   rate1 = '*Рейтинг: {}*\n'.format(k)
+               giving_form = '{}\n'.format(t)+rate1+'' \
+                             '{}\n' \
+                             'Возраст: {}\n' \
+                             'Специализация: {}\n' \
+                             'Опыт работы(лет): {}\n' \
+                             'Занятость: {}\n' \
+                             'Оплата в час: {}\n' \
+                             '_Зарплата {} среднего_\n\n'.format(name4, age4, specialisation4, experience4,
+                                                                 job_time4, money_hour4, pay1)
+               giving_forms += giving_form
+               button = types.InlineKeyboardButton(str(t), callback_data="номер" + str(id4))
+               keyboard.add(button)
+           cur.execute("SELECT * FROM workers LIMIT 1 OFFSET ?;", (t - 1,))
+           if cur.fetchone() is not None:
+               button_next = types.InlineKeyboardButton('Далее', callback_data='1Далее0')
+               keyboard.add(button_next)
+           if giving_forms == '':
+               giving_forms = "Нет анкет"
+           bot.send_message(message.chat.id, giving_forms, parse_mode="Markdown", reply_markup=keyboard)
+       cur.close()
+
+   elif message.text == "Избранное" or message.text == "избранное":
+       cur = conn.cursor()
+       cur.execute('SELECT chosen FROM jobs WHERE id=?', (message.chat.id,))
+       result = cur.fetchone()
+       if result is None:
+           cur.execute('SELECT chosen FROM workers WHERE id=?', (message.chat.id,))
+           result = cur.fetchone()
+           if result is None:
+               bot.send_message(message.chat.id, 'Вы не зарегистрированы', reply_markup=reg)
+           else:
+               user_chosen = result[0]
+               if user_chosen == '0':
+                   bot.send_message(message.chat.id, 'У вас нет анкет в избранном')
+               else:
+                   user_chosen_values = user_chosen.split(',')
+                   new_chosen_jobs = '0'
+                   for i in user_chosen_values:
+                       if i != '0':
+                           cur.execute('SELECT * FROM jobs WHERE id=?', (i,))
+                           chosen_jobs = cur.fetchone()
+                           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                           money_all = cur.fetchone()
+                           pay = money_all[1]
+                           pay_p = money_all[2]
+                           pay /= pay_p
+                           if chosen_jobs is not None:
+                               new_chosen_jobs = new_chosen_jobs + ',' + i
+                               specialisation5 = chosen_jobs[1]
+                               experience5 = chosen_jobs[2]
+                               place_name5 = chosen_jobs[3]
+                               place5 = chosen_jobs[4]
+                               job_time5 = chosen_jobs[6]
+                               money_hour5 = chosen_jobs[7]
+                               if pay >= money_hour5:
+                                   pay1 = 'меньше'
+                               else:
+                                   pay1 = 'больше'
+                               if chosen_jobs[12] == 0:
+                                   rate1 = '*Рейтинг: -*\n'
+                               else:
+                                   k = chosen_jobs[11] / chosen_jobs[12]
+                                   rate1 = '*Рейтинг: {}*\n'.format(k)
+                               giving_form = rate1+'Специализация: {}\n' \
+                                             'Желаемый опыт работы(лет): {}\n' \
+                                             'Название места: {}\n' \
+                                             'Адрес: {}\n' \
+                                             'Занятость: {}\n' \
+                                             'Оплата в час: {}\n' \
+                                             '_Зарплата {} среднего_\n'.format(specialisation5, experience5,
+                                                                               place_name5,
+                                                                               place5, job_time5, money_hour5, pay1)
+                               chosen_keyboard = types.InlineKeyboardMarkup()
+                               chosen_button1 = types.InlineKeyboardButton('Нравится', callback_data='лайк' + i)
+                               chosen_button2 = types.InlineKeyboardButton('Убрать из избранного',
+                                                                           callback_data='убрать' + i)
+                               chosen_button3 = types.InlineKeyboardButton("Отзывы", callback_data="ответ" + i)
+                               chosen_keyboard.add(chosen_button1, chosen_button2, chosen_button3)
+                               bot.send_message(message.chat.id, giving_form, parse_mode="Markdown",
+                                                reply_markup=chosen_keyboard)
+                   cur.execute('UPDATE workers SET chosen=? WHERE id=?', (new_chosen_jobs, message.chat.id))
+                   conn.commit()
+
+       else:
+           user_chosen = result[0]
+           if user_chosen == '0':
+               bot.send_message(message.chat.id, 'У вас нет анкет в избранном')
+           else:
+               user_chosen_values = user_chosen.split(',')
+               new_chosen_jobs = '0'
+               for i in user_chosen_values:
+                   if i != '0':
+                       cur.execute('SELECT * FROM workers WHERE id=?', (i,))
+                       chosen_jobs = cur.fetchone()
+                       cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                       money_all = cur.fetchone()
+                       pay = money_all[3]
+                       pay_p = money_all[4]
+                       pay /= pay_p
+                       if chosen_jobs is not None:
+                           new_chosen_jobs = new_chosen_jobs + ',' + i
+                           name6 = chosen_jobs[1]
+                           age6 = chosen_jobs[2]
+                           specialisation6 = chosen_jobs[3]
+                           experience6 = chosen_jobs[4]
+                           job_time6 = chosen_jobs[5]
+                           money_hour6 = chosen_jobs[6]
+                           if pay >= money_hour6:
+                               pay1 = 'меньше'
+                           else:
+                               pay1 = 'больше'
+                           if chosen_jobs[12] == 0:
+                               rate1 = '*Рейтинг: -*\n'
+                           else:
+                               k = chosen_jobs[11] / chosen_jobs[12]
+                               rate1 = '*Рейтинг: {}*\n'.format(k)
+                           giving_form = rate1+'{}\n' \
+                                         'Возраст: {}\n' \
+                                         'Специализация: {}\n' \
+                                         'Опыт работы(лет): {}\n' \
+                                         'Занятость: {}\n' \
+                                         'Оплата в час: {}\n' \
+                                         '_Зарплата {} среднего_\n'.format(name6, age6, specialisation6, experience6,
+                                                                           job_time6, money_hour6, pay1)
+                           chosen_keyboard = types.InlineKeyboardMarkup()
+                           chosen_button1 = types.InlineKeyboardButton('Нравится', callback_data='лайк' + i)
+                           chosen_button2 = types.InlineKeyboardButton('Убрать из избранного',
+                                                                       callback_data='убрать' + i)
+                           chosen_button3 = types.InlineKeyboardButton("Отзывы", callback_data="ответ" + i)
+                           chosen_keyboard.add(chosen_button1, chosen_button2, chosen_button3)
+                           bot.send_message(message.chat.id, giving_form, parse_mode="Markdown",
+                                            reply_markup=chosen_keyboard)
+               cur.execute('UPDATE jobs SET chosen=? WHERE id=?', (new_chosen_jobs, message.chat.id))
+               conn.commit()
+       cur.close()
+
+   elif message.text == "Оценить" or message.text == "оценить":
+       cur = conn.cursor()
+       cur.execute('SELECT likes FROM jobs WHERE id=?', (message.chat.id,))
+       personal_likes = cur.fetchone()
+       if personal_likes is None:
+           cur.execute('SELECT likes FROM workers WHERE id=?', (message.chat.id,))
+           personal_likes = cur.fetchone()
+           if personal_likes is None:
+               bot.send_message(message.chat.id, 'Вы не зарегистрированы', reply_markup=reg)
+           else:
+               personal_likes1 = personal_likes[0]
+               if personal_likes1 == '0':
+                   bot.send_message(message.chat.id, 'У вас нет взаимного "нравится"', reply_markup=menu)
+               else:
+                   personal_likes1 = personal_likes[0].split(',')
+                   personal_likes_new = '0'
+                   for p_l1 in personal_likes1:
+                       if int(p_l1) != 0:
+                           cur.execute('SELECT likes FROM jobs WHERE id=?', (int(p_l1),))
+                           personal_likes = cur.fetchone()
+                           if personal_likes is None:
+                               pass
+                           else:
+                               personal_likes_new = personal_likes_new + ',' + p_l1
+                               personal_likes2 = personal_likes[0].split(',')
+                               m = 0
+                               t = 0
+                               k = 0
+                               for p_l2 in personal_likes2:
+                                   if int(p_l2) == message.chat.id:
+                                       m = 1
+                               if m == 1:
+                                   t += 1
+                                   cur.execute('SELECT marked FROM workers WHERE id=?', (message.chat.id,))
+                                   new_marked_likes= cur.fetchone()[0]
+                                   marked_likes = new_marked_likes.split(',')
+                                   p = 0
+                                   for marked_like in marked_likes:
+                                       if int(marked_like) == int(p_l1):
+                                           p = 1
+                                           k += 1
+                                   if p == 0:
+                                       new_marked_likes += "," + p_l1
+                                       cur.execute('UPDATE workers SET marked=? WHERE id=?',
+                                                   (new_marked_likes, message.chat.id))
+                                       conn.commit()
+                                       cur.execute('SELECT * FROM jobs WHERE id=?', (int(p_l1),))
+                                       row = cur.fetchone()
+                                       cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                                       money_all = cur.fetchone()
+                                       pay = money_all[1]
+                                       pay_p = money_all[2]
+                                       pay /= pay_p
+                                       if pay >= row[7]:
+                                           pay1 = 'меньше'
+                                       else:
+                                           pay1 = 'больше'
+                                       giving_form = 'Специализация: {}\n' \
+                                                     'Желаемый опыт работы(лет): {}\n' \
+                                                     'Название места: {}\n' \
+                                                     'Адрес: {}\n' \
+                                                     'Занятость: {}\n' \
+                                                     'Оплата в час: {}\n' \
+                                                     '_Зарплата {} среднего_\n'.format(row[1], row[2],
+                                                                                       row[3],
+                                                                                       row[4], row[6], row[7],
+                                                                                       pay1)
+                                       make_review = types.InlineKeyboardButton('Отзыв', callback_data='отзыв' + p_l1)
+                                       make_review_keyboard = types.InlineKeyboardMarkup()
+                                       make_review_keyboard.add(make_review)
+                                       bot.send_message(message.chat.id, giving_form, parse_mode="Markdown",
+                                                        reply_markup=make_review_keyboard)
+                               if t == 0:
+                                   bot.send_message(message.chat.id, 'У вас нет взаимного "нравится"')
+                               elif t == k:
+                                   bot.send_message(message.chat.id, 'У вас нет неоцененных анкет')
+                   if personal_likes_new == '0':
+                       bot.send_message(message.chat.id, 'У вас нет взаимного "нравится"', reply_markup=menu)
+                   cur.execute('UPDATE workers SET likes=? WHERE id=?', (personal_likes_new, message.chat.id))
+                   conn.commit()
+       else:
+           personal_likes1 = personal_likes[0]
+           if personal_likes1 == '0':
+               bot.send_message(message.chat.id, 'У вас нет взаимного "нравится"', reply_markup=menu)
+           else:
+               personal_likes1 = personal_likes[0].split(',')
+               personal_likes_new = '0'
+               for p_l1 in personal_likes1:
+                   if int(p_l1) != 0:
+                       cur.execute('SELECT likes FROM workers WHERE id=?', (int(p_l1),))
+                       personal_likes = cur.fetchone()
+                       if personal_likes is None:
+                           pass
+                       else:
+                           personal_likes_new = personal_likes_new + ',' + p_l1
+                           personal_likes2 = personal_likes[0].split(',')
+                           m = 0
+                           t = 0
+                           k = 0
+                           for p_l2 in personal_likes2:
+                               if int(p_l2) == message.chat.id:
+                                   m = 1
+                           if m == 1:
+                               t += 1
+                               cur.execute('SELECT marked FROM jobs WHERE id=?', (message.chat.id,))
+                               new_marked_likes= cur.fetchone()[0]
+                               marked_likes = new_marked_likes.split(',')
+                               p = 0
+                               for marked_like in marked_likes:
+                                   if int(marked_like) == int(p_l1):
+                                       p = 1
+                                       k += 1
+                               if p == 0:
+                                   new_marked_likes+="," + p_l1
+                                   cur.execute('UPDATE jobs SET marked=? WHERE id=?',
+                                               (new_marked_likes, message.chat.id))
+                                   conn.commit()
+                                   cur.execute('SELECT * FROM workers WHERE id=?', (int(p_l1),))
+                                   row = cur.fetchone()
+                                   cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                                   money_all = cur.fetchone()
+                                   pay = money_all[3]
+                                   pay_p = money_all[4]
+                                   pay /= pay_p
+                                   if pay >= row[6]:
+                                       pay1 = 'меньше'
+                                   else:
+                                       pay1 = 'больше'
+                                   giving_form = '{}\n' \
+                                                 'Возраст: {}\n' \
+                                                 'Специализация: {}\n' \
+                                                 'Опыт работы(лет): {}\n' \
+                                                 'Занятость: {}\n' \
+                                                 'Оплата в час: {}\n' \
+                                                 '_Зарплата {} среднего_\n\n'.format(row[1], row[2], row[3],
+                                                                                     row[4],
+                                                                                     row[5], row[6], pay1)
+                                   make_review = types.InlineKeyboardButton('Отзыв', callback_data='отзыв' + p_l1)
+                                   make_review_keyboard = types.InlineKeyboardMarkup()
+                                   make_review_keyboard.add(make_review)
+                                   bot.send_message(message.chat.id, giving_form, parse_mode="Markdown",
+                                                    reply_markup=make_review_keyboard)
+                           if t == 0:
+                               bot.send_message(message.chat.id, 'У вас нет взаимного "нравится"')
+                           elif t == k:
+                               bot.send_message(message.chat.id, 'У вас нет неоцененных анкет')
+               if personal_likes_new == '0':
+                   bot.send_message(message.chat.id, 'У вас нет взаимного "нравится"', reply_markup=menu)
+               cur.execute('UPDATE jobs SET likes=? WHERE id=?', (personal_likes_new, message.chat.id))
+               conn.commit()
+       cur.close()
+   else:
+       bot.send_message(message.chat.id, 'Такой команды у меня нет', reply_markup=menu)
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_inline(call):
+   menu = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True, one_time_keyboard=True)  # кнопка
+   button3 = types.KeyboardButton("Меню")
+   menu.add(button3)
+   reg = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+   reg1 = types.KeyboardButton('Зарегистрироваться')
+   reg.add(reg1)
+   if call.data.startswith("Далее"):
+       number = int(call.data[5:]) + 1
+
+       def display_form1(m, t, offset):
+           cur = conn.cursor()
+           cur.execute('SELECT * FROM jobs LIMIT ?1 OFFSET ?2', (m, offset * 6))
+           rows = cur.fetchall()
+           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+           money_all = cur.fetchone()
+           pay = money_all[1]
+           pay_p = money_all[2]
+           pay /= pay_p
+           keyboard = types.InlineKeyboardMarkup()
+           giving_forms = ''
+           for row in rows:
+               id3 = row[0]
+               specialisation3 = row[1]
+               experience3 = row[2]
+               place_name3 = row[3]
+               place3 = row[4]
+               job_time3 = row[6]
+               money_hour3 = row[7]
+               if pay >= money_hour3:
+                   pay1 = 'меньше'
+               else:
+                   pay1 = 'больше'
+               t += 1
+               if row[12] == 0:
+                   rate1 = '*Рейтинг: -*\n'
+               else:
+                   k = row[11] / row[12]
+                   rate1 = '*Рейтинг: {}*\n'.format(k)
+               giving_form = '{}\n'.format(t) + rate1 +'' \
+                             'Специализация: {}\n' \
+                             'Желаемый опыт работы(лет): {}\n' \
+                             'Название места: {}\n' \
+                             'Адрес: {}\n' \
+                             'Занятость: {}\n' \
+                             'Оплата в час: {}\n' \
+                             '_Зарплата {} среднего_\n\n'.format(specialisation3, experience3, place_name3,
+                                                                 place3, job_time3, money_hour3, pay1)
+               giving_forms += giving_form
+               button = types.InlineKeyboardButton(str(t), callback_data="номер" + str(id3))
+               keyboard.add(button)
+           cur.execute("SELECT * FROM jobs LIMIT 1 OFFSET ?;", (t,))
+           if cur.fetchone() is not None:
+               button_next = types.InlineKeyboardButton('Далее', callback_data='Далее' + str(offset))
+               keyboard.add(button_next)
+           if giving_forms == '':
+               giving_forms = "Нет анкет"
+           bot.send_message(call.from_user.id, giving_forms, parse_mode='Markdown', reply_markup=keyboard)
+           offset += 1
+           cur.close()
+
+       cur = conn.cursor()
+       cur.execute("SELECT COUNT(*) FROM jobs;")
+       count = cur.fetchone()[0]
+       if count - 6 * number < 6:
+           display_form1(count - 6 * number, 6 * number, number)
+       else:
+           display_form1(6, 6 * number, number)
+       cur.close()
+
+   if call.data.startswith("1Далее"):
+       number = int(call.data[6:]) + 1
+
+       def display_form1(m, t, offset):
+           cur = conn.cursor()
+           cur.execute('SELECT * FROM workers LIMIT ?1 OFFSET ?2', (m, offset * 6))
+           rows = cur.fetchall()
+           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+           money_all = cur.fetchone()
+           pay = money_all[3]
+           pay_p = money_all[4]
+           pay /= pay_p
+           keyboard = types.InlineKeyboardMarkup()
+           giving_forms = ''
+           for row in rows:
+               id4 = row[0]
+               name4 = row[1]
+               age4 = row[2]
+               specialisation4 = row[3]
+               experience4 = row[4]
+               job_time4 = row[5]
+               money_hour4 = row[6]
+               if pay >= money_hour4:
+                   pay1 = 'меньше'
+               else:
+                   pay1 = 'больше'
+               t += 1
+               if row[12] == 0:
+                   rate1 = '*Рейтинг: -*\n'
+               else:
+                   k = row[11] / row[12]
+                   rate1 = '*Рейтинг: {}*\n'.format(k)
+               giving_form = '{}\n'.format(t) + rate1 +'' \
+                             '{}\n' \
+                             'Возраст: {}\n' \
+                             'Специализация: {}\n' \
+                             'Опыт работы(лет): {}\n' \
+                             'Занятость: {}\n' \
+                             'Оплата в час: {}\n' \
+                             '_Зарплата {} среднего_\n\n'.format(name4, age4, specialisation4, experience4,
+                                                                 job_time4, money_hour4, pay1)
+               giving_forms += giving_form
+               button = types.InlineKeyboardButton(str(t), callback_data="номер" + str(id4))
+               keyboard.add(button)
+           cur.execute("SELECT * FROM workers LIMIT 1 OFFSET ?;", (t,))
+           if cur.fetchone() is not None:
+               button_next = types.InlineKeyboardButton('Далее', callback_data='1Далее' + str(offset))
+               keyboard.add(button_next)
+           if giving_forms == '':
+               giving_forms = "Нет анкет"
+           bot.send_message(call.from_user.id, giving_forms, parse_mode="Markdown", reply_markup=keyboard)
+           offset += 1
+           cur.close()
+
+       cur = conn.cursor()
+       cur.execute("SELECT COUNT(*) FROM workers;")
+       count = cur.fetchone()[0]
+       if count - 6 * number < 6:
+           display_form1(count - 6 * number, 6 * number, number)
+       else:
+           display_form1(6, 6 * number, number)
+       cur.close()
+
+   if call.data.startswith("номер"):
+       like_id = int(call.data[5:])
+       cur = conn.cursor()
+       cur.execute('SELECT id FROM workers WHERE id=?', (like_id,))
+       if cur.fetchone() is None:
+           cur.execute('SELECT id FROM jobs WHERE id=?', (like_id,))
+           if cur.fetchone() is None:
+               bot.send_message(call.chat.id, 'Пользователь удалил свою анкету', reply_markup=menu)
+           else:
+               cur.execute('SELECT specialisation, experience, place_name,'
+                           ' place, job_time, money_hour, mark_n, review_n FROM jobs WHERE id=?;', (like_id,))
+               row = cur.fetchone()
+               cur.execute("SELECT * FROM money WHERE number=?", (1,))
+               money_all = cur.fetchone()
+               pay = money_all[1]
+               pay_p = money_all[2]
+               pay /= pay_p
+               specialisation_value = row[0]
+               experience_value = row[1]
+               place_name_value = row[2]
+               place_value = row[3]
+               job_time_value = row[4]
+               money_hour_value = row[5]
+               if pay >= money_hour_value:
+                   pay1 = 'меньше'
+               else:
+                   pay1 = 'больше'
+               if row[7] == 0:
+                   rate1 = '*Рейтинг: -*\n'
+               else:
+                   k = row[6] / row[7]
+                   rate1 = '*Рейтинг: {}*\n'.format(k)
+               like_keyboard = types.InlineKeyboardMarkup(row_width=2)
+               like = types.InlineKeyboardButton("Нравится", callback_data="лайк" + str(like_id))
+               chose = types.InlineKeyboardButton("В избранное", callback_data="избранное" + str(like_id))
+               review_ = types.InlineKeyboardButton("Отзывы", callback_data="ответ" + str(like_id))
+               like_keyboard.add(like, chose, review_)
+               bot.send_message(call.from_user.id, rate1+'Специализация: {}\n'
+                                                   'Желаемый опыт работы(лет): {}\n'
+                                                   'Название места: {}\n'
+                                                   'Адрес: {}\n'
+                                                   'Занятость: {}\n'
+                                                   'Оплата в час: {}\n'
+                                                   '_Зарплата {} среднего_\n'.format(specialisation_value,
+                                                                                     experience_value,
+                                                                                     place_name_value,
+                                                                                     place_value, job_time_value,
+                                                                                     money_hour_value, pay1),
+                                parse_mode="Markdown",
+                                reply_markup=like_keyboard)
+
+       else:
+           cur.execute('SELECT name, age, specialisation, experience, job_time,'
+                       ' money_hour, mark_n, review_n FROM workers WHERE id=?;', (like_id,))
+           row = cur.fetchone()
+           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+           money_all = cur.fetchone()
+           pay = money_all[3]
+           pay_p = money_all[4]
+           pay /= pay_p
+           name_value = row[0]
+           age_value = row[1]
+           specialisation_value = row[2]
+           experience_value = row[3]
+           job_time_value = row[4]
+           money_hour_value = row[5]
+           if pay >= money_hour_value:
+               pay1 = 'меньше'
+           else:
+               pay1 = 'больше'
+           if row[7] == 0:
+               rate1 = '*Рейтинг: -*\n'
+           else:
+               k = row[6] / row[7]
+               rate1 = '*Рейтинг: {}*\n'.format(k)
+           like_keyboard = types.InlineKeyboardMarkup(row_width=2)
+           like = types.InlineKeyboardButton("Нравится", callback_data="лайк" + str(like_id))
+           chose = types.InlineKeyboardButton("В избранное", callback_data="избранное" + str(like_id))
+           review_ = types.InlineKeyboardButton("Отзывы", callback_data="ответ" + str(like_id))
+           like_keyboard.add(like, chose, review_)
+           bot.send_message(call.from_user.id, rate1+'{}\n'
+                                               'Возраст: {}\n'
+                                               'Специализация: {}\n'
+                                               'Опыт работы(лет): {}\n'
+                                               'Занятость: {}\n'
+                                               'Желаемая оплата в час: {}\n'
+                                               '_Зарплата {} среднего_\n'.format(name_value, age_value,
+                                                                                 specialisation_value,
+                                                                                 experience_value, job_time_value,
+                                                                                 money_hour_value, pay1),
+                            parse_mode="Markdown",
+                            reply_markup=like_keyboard)
+       cur.close()
+
+   if call.data.startswith("лайк"):
+       id_liked = int(call.data[4:])
+       cur = conn.cursor()
+       cur.execute('SELECT likes FROM jobs WHERE id=?', (id_liked,))
+       likes1_str = cur.fetchone()
+       cur.execute('SELECT likes FROM workers WHERE id=?', (id_liked,))
+       likes2_str = cur.fetchone()
+       if likes1_str is None and likes2_str is None:
+           bot.send_message(call.from_user.id, 'Данный пользователь удалил свою анкету')
+       else:
+           cur.execute('SELECT likes FROM jobs WHERE id=?', (call.from_user.id,))
+           likes_jobs1 = cur.fetchone()
+           cur.execute('SELECT likes FROM workers WHERE id=?', (call.from_user.id,))
+           likes_workers2 = cur.fetchone()
+           if likes_jobs1 is None and likes_workers2 is None:
+               bot.send_message(call.from_user.id, 'Вы не зарегистрированы')
+           else:
+               if likes_jobs1 is not None and likes2_str is not None:
+                   t = 0
+                   likes2_values = likes2_str[0].split(',')
+                   for likes2_value in likes2_values:
+                       if int(likes2_value) == call.from_user.id:
+                           t = 1
+                   if t == 1:
+                       bot.send_message(call.from_user.id, 'Отлично! Вы можете написать данному пользователю на @{}'
+                                                           ' или он сам напишет вам'.format(
+                           bot.get_chat(id_liked).username),
+                                        reply_markup=menu)
+                       l = likes_jobs1[0] + ',' + str(id_liked)
+                       cur.execute('UPDATE jobs SET likes=? WHERE id=?', (l, call.from_user.id))
+                       conn.commit()
+                       cur.execute('SELECT * FROM jobs WHERE id=?', (call.from_user.id,))
+                       row = cur.fetchone()
+                       cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                       money_all = cur.fetchone()
+                       pay = money_all[1]
+                       pay_p = money_all[2]
+                       pay /= pay_p
+                       if pay >= row[7]:
+                           pay1 = 'меньше'
+                       else:
+                           pay1 = 'больше'
+                       message_like_text = 'Ваша анкета понравилась в ответ пользователю: \n' \
+                                           'Специализация: {}\n' \
+                                           'Желаемый опыт работы(лет): {}\n' \
+                                           'Название места: {}\n' \
+                                           'Адрес: {}\n' \
+                                           'Занятость: {}\n' \
+                                           'Оплата в час: {}\n' \
+                                           '_Зарплата {} среднего_\n' \
+                                           'Вы можете написать данному пользователю на @{}' \
+                                           ' или он сам напишет вам'.format(row[1],
+                                                                            row[2], row[3],
+                                                                            row[4], row[6],
+                                                                            row[7], pay1,
+                                                                            bot.get_chat(call.from_user.id).username)
+                       bot.send_message(id_liked, message_like_text, parse_mode="Markdown", reply_markup=menu)
+                   else:
+                       m = 0
+                       likes_jobs1_values = likes_jobs1[0].split(',')
+                       for likes_jobs1_value in likes_jobs1_values:
+                           if int(likes_jobs1_value) == id_liked:
+                               m = 1
+                       if m == 1:
+                           bot.send_message(call.from_user.id, 'Вы уже отправляли свою анкету этому пользователю')
+                       else:
+                           likes_jobs = likes_jobs1[0]
+                           likes_jobs += ',' + str(id_liked)
+                           cur.execute('UPDATE jobs SET likes=? WHERE id=?', (likes_jobs, call.from_user.id))
+                           conn.commit()
+                           answer_button1 = types.InlineKeyboardButton('Нравится',
+                                                                       callback_data='лайк' + str(call.from_user.id))
+                           answer_button2 = types.InlineKeyboardButton('Не интересно',
+                                                                       callback_data='нелайк' + str(call.from_user.id))
+                           answer_button3 = types.InlineKeyboardButton('Отзывы',
+                                                                       callback_data='ответ' + str(call.from_user.id))
+                           answer_like_keyboard = types.InlineKeyboardMarkup()
+                           answer_like_keyboard.add(answer_button1, answer_button2, answer_button3)
+                           cur.execute('SELECT * FROM jobs WHERE id=?', (call.from_user.id,))
+                           row = cur.fetchone()
+                           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                           money_all = cur.fetchone()
+                           pay = money_all[1]
+                           pay_p = money_all[2]
+                           pay /= pay_p
+                           if pay >= row[7]:
+                               pay1 = 'меньше'
+                           else:
+                               pay1 = 'больше'
+                           if row[12] == 0:
+                               rate1 = '*Рейтинг: -*\n'
+                           else:
+                               k = row[11] / row[12]
+                               rate1 = '*Рейтинг: {}*\n'.format(k)
+                           message_like_text = 'Ваша анкета понравилась работодателю: \n'+rate1+'' \
+                                               'Специализация: {}\n' \
+                                               'Желаемый опыт работы(лет): {}\n' \
+                                               'Название места: {}\n' \
+                                               'Адрес: {}\n' \
+                                               'Занятость: {}\n' \
+                                               'Оплата в час: {}\n' \
+                                               '_Зарплата {} среднего_\n'.format(row[1],
+                                                                                 row[2], row[3],
+                                                                                 row[4], row[6],
+                                                                                 row[7], pay1)
+                           bot.send_message(id_liked, message_like_text, parse_mode="Markdown",
+                                            reply_markup=answer_like_keyboard)
+                   cur.close()
+
+               elif likes_workers2 is not None and likes1_str is not None:
+                   likes1_values = likes1_str[0].split(',')
+                   t = 0
+                   for likes1_value in likes1_values:
+                       if int(likes1_value) == call.from_user.id:
+                           t = 1
+                   if t == 1:
+                       bot.send_message(call.from_user.id, 'Отлично! Вы можете написать данному пользователю на @{}'
+                                                           ' или он сам напишет вам'.format(
+                           bot.get_chat(id_liked).username),
+                                        reply_markup=menu)
+                       l = likes_workers2[0] + ',' + str(id_liked)
+                       cur.execute('UPDATE workers SET likes=? WHERE id=?', (l, call.from_user.id))
+                       conn.commit()
+                       cur.execute('SELECT * FROM workers WHERE id=?', (call.from_user.id,))
+                       row = cur.fetchone()
+                       cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                       money_all = cur.fetchone()
+                       pay = money_all[3]
+                       pay_p = money_all[4]
+                       pay /= pay_p
+                       if pay >= row[6]:
+                           pay1 = 'меньше'
+                       else:
+                           pay1 = 'больше'
+                       message_like_text = 'Ваша анкета понравилась в ответ пользователю: \n' \
+                                           '{}\n' \
+                                           'Возраст: {}\n' \
+                                           'Специализация: {}\n' \
+                                           'Опыт работы(лет): {}\n' \
+                                           'Занятость: {}\n' \
+                                           'Желаемая оплата в час: {}\n' \
+                                           '_Зарплата {} среднего_\n' \
+                                           'Вы можете написать данному пользователю на @{}' \
+                                           ' или он сам напишет вам'.format(row[1],
+                                                                            row[2], row[3],
+                                                                            row[4], row[5],
+                                                                            row[6], pay1,
+                                                                            bot.get_chat(call.from_user.id).username)
+                       bot.send_message(id_liked, message_like_text, parse_mode="Markdown", reply_markup=menu)
+                   else:
+                       m = 0
+                       likes_workers2_values = likes_workers2[0].split(',')
+                       for likes_workers2_value in likes_workers2_values:
+                           if int(likes_workers2_value) == id_liked:
+                               m = 1
+                       if m == 1:
+                           bot.send_message(call.from_user.id, 'Вы уже отправляли свою анкету этому пользователю')
+                       else:
+                           likes_workers = likes_workers2[0]
+                           likes_workers += ',' + str(id_liked)
+                           cur.execute('UPDATE workers SET likes=? WHERE id=?',
+                                       (likes_workers, call.from_user.id))
+                           conn.commit()
+                           answer_button1 = types.InlineKeyboardButton('Нравится',
+                                                                       callback_data='лайк' + str(call.from_user.id))
+                           answer_button2 = types.InlineKeyboardButton('Не интересно',
+                                                                       callback_data='нелайк' + str(call.from_user.id))
+                           answer_button3 = types.InlineKeyboardButton('Отзывы',
+                                                                       callback_data='ответ' + str(call.from_user.id))
+                           answer_like_keyboard = types.InlineKeyboardMarkup()
+                           answer_like_keyboard.add(answer_button1, answer_button2, answer_button3)
+                           cur.execute('SELECT * FROM workers WHERE id=?', (call.from_user.id,))
+                           row = cur.fetchone()
+                           cur.execute("SELECT * FROM money WHERE number=?", (1,))
+                           money_all = cur.fetchone()
+                           pay = money_all[3]
+                           pay_p = money_all[4]
+                           pay /= pay_p
+                           if pay >= row[6]:
+                               pay1 = 'меньше'
+                           else:
+                               pay1 = 'больше'
+                           if row[12] == 0:
+                               rate1 = '*Рейтинг: -*\n'
+                           else:
+                               k = row[11] / row[12]
+                               rate1 = '*Рейтинг: {}*\n'.format(k)
+                           message_like_text = 'Ваша анкета понравилась работнику: \n' \
+                                               '{}\n'.format(row[1]) + rate1+'' \
+                                               'Возраст: {}\n' \
+                                               'Специализация: {}\n' \
+                                               'Опыт работы(лет): {}\n' \
+                                               'Занятость: {}\n' \
+                                               'Желаемая оплата в час: {}\n' \
+                                               '_Зарплата {} среднего_\n'.format(row[2], row[3],
+                                                                                  row[4], row[5],
+                                                                                  row[6], pay1)
+                           bot.send_message(id_liked, message_like_text, parse_mode="Markdown",
+                                            reply_markup=answer_like_keyboard)
+               else:
+                   bot.send_message(call.from_user.id,
+                                    'Работодатель не может отмечать работодателей, работник - не может работников',
+                                    reply_markup=menu)
+       cur.close()
+
+   if call.data.startswith("нелайк"):
+       chat_id = call.message.chat.id
+       message_id = call.message.message_id
+       bot.delete_message(chat_id, message_id)
+
+   if call.data.startswith("избранное"):
+       cur = conn.cursor()
+       cur.execute('SELECT chosen FROM jobs WHERE id=?', (call.from_user.id,))
+       chosen_str = cur.fetchone()
+       if chosen_str is None:
+           cur.execute('SELECT chosen FROM workers WHERE id=?', (call.from_user.id,))
+           chosen_str = cur.fetchone()
+           if chosen_str is None:
+               bot.send_message(call.from_user.id, 'Вы не зарегестрированы', reply_markup=reg)
+           else:
+               ch = int(call.data[9:])
+               cur.execute('SELECT id FROM jobs WHERE id=?', (ch,))
+               if cur.fetchone() is not None:
+                   cur.execute('SELECT chosen FROM workers WHERE id=?', (call.from_user.id,))
+                   chosen_erlier = cur.fetchone()[0]
+                   values_chosen_erlier = chosen_erlier.split(',')
+                   t = 0
+                   for val_ch_er in values_chosen_erlier:
+                       if int(val_ch_er) == ch:
+                           t = 1
+                   if t == 0:
+                       chosen_str = str(chosen_str[0]) + "," + str(ch)
+                       cur.execute('UPDATE workers SET chosen=?1 WHERE id=?2', (chosen_str, call.from_user.id))
+                       conn.commit()
+                       bot.send_message(call.from_user.id, 'Пользователь добавлен в избранное')
+                   else:
+                       bot.send_message(call.from_user.id, 'Этот пользователь уже находится у вас в избранном')
+               else:
+                   cur.execute('SELECT id FROM workers WHERE id=?', (ch,))
+                   if cur.fetchone() is not None:
+                       bot.send_message(call.from_user.id, 'Вы можете добавлять в избранное только работодателей')
+                   else:
+                       bot.send_message(call.from_user.id, 'Пользователь удалил свою анкету')
+       else:
+           ch = int(call.data[9:])
+           cur.execute('SELECT id FROM workers WHERE id=?', (ch,))
+           if cur.fetchone() is not None:
+               cur.execute('SELECT chosen FROM jobs WHERE id=?', (call.from_user.id,))
+               chosen_erlier = cur.fetchone()[0]
+               values_chosen_erlier = chosen_erlier.split(',')
+               t = 0
+               for val_ch_er in values_chosen_erlier:
+                   if int(val_ch_er) == ch:
+                       t = 1
+               if t == 0:
+                   chosen_str = str(chosen_str[0]) + "," + str(ch)
+                   cur.execute('UPDATE jobs SET chosen=?1 WHERE id=?2', (chosen_str, call.from_user.id))
+                   conn.commit()
+                   bot.send_message(call.from_user.id, 'Пользователь добавлен в избранное')
+               else:
+                   bot.send_message(call.from_user.id, 'Этот пользователь уже находится у вас в избранном')
+           else:
+               cur.execute('SELECT id FROM jobs WHERE id=?', (ch,))
+               if cur.fetchone() is not None:
+                   bot.send_message(call.from_user.id, 'Вы можете добавлять в избранное только работников')
+               else:
+                   bot.send_message(call.from_user.id, 'Пользователь удалил свою анкету')
+       cur.close()
+
+   if call.data.startswith("убрать"):
+       delete_from_chosen = call.data[6:]
+       cur = conn.cursor()
+       cur.execute('SELECT chosen FROM jobs WHERE id=?', (call.from_user.id,))
+       result = cur.fetchone()
+       if result is None:
+           cur.execute('SELECT chosen FROM workers WHERE id=?', (call.from_user.id,))
+           result = cur.fetchone()
+           if result is None:
+               bot.send_message(call.from_user.id, 'Вы не зарегистрированы', reply_markup=reg)
+           else:
+               chosen = result[0]
+               chosen_str = '0'
+               values_chosen = chosen.split(',')
+               for val_ch in values_chosen:
+                   if val_ch != delete_from_chosen and int(val_ch) != 0:
+                       chosen_str = chosen_str + "," + val_ch
+               cur.execute('UPDATE workers SET chosen=?1 WHERE id=?2', (chosen_str, call.from_user.id))
+               conn.commit()
+               bot.send_message(call.from_user.id, 'Пользователь удален из избранного')
+       else:
+           chosen = result[0]
+           chosen_str = '0'
+           values_chosen = chosen.split(',')
+           for val_ch in values_chosen:
+               if val_ch != delete_from_chosen and int(val_ch) != 0:
+                   chosen_str = chosen_str + "," + val_ch
+           cur.execute('UPDATE jobs SET chosen=?1 WHERE id=?2', (chosen_str, call.from_user.id))
+           conn.commit()
+           bot.send_message(call.from_user.id, 'Пользователь удален из избранного')
+       cur.close()
+
+   if call.data.startswith("отзыв"):
+       id_reviewed = call.data[5:]
+       def step0():
+           bot.send_message(call.from_user.id, 'Обратите внимание, вы не сможете потом изменить данный отзыв.'
+                                           ' Если готовы продолжить, напишите "Да", иначе напишите "Нет"', )
+           bot.register_next_step_handler(call.message, step1)
+
+       def step1(message):
+           q_answer = message.text.strip()
+           if q_answer == "Да" or q_answer == "да":
+               bot.send_message(message.chat.id, 'Поставьте оценку от 1 до 5')
+               bot.register_next_step_handler(message, step2)
+           elif q_answer == "Нет" or q_answer == "нет":
+               bot.send_message(call.from_user.id, 'Хорошо, вы можете оставить отзыв попозже', reply_markup=menu)
+           else:
+               bot.send_message(message.chat.id, 'Напишите "Да" или "Нет"')
+               bot.register_next_step_handler(message, step1)
+
+       def step2(message):
+           global q_rate
+           q_rate = message.text.strip()
+           if q_rate == "1" or q_rate == "2" or q_rate == "3" or q_rate == "4" or q_rate == "5":
+               bot.send_message(message.chat.id, 'Напишите отзыв(не более 500 символов)')
+               bot.register_next_step_handler(message, step3)
+           else:
+               bot.send_message(message.chat.id, 'Оцените целым числом от 1 до 5"')
+               bot.register_next_step_handler(message, step2)
+
+       def step3(message):
+           q_review = message.text.strip()
+           if len(q_review) > 500:
+               bot.send_message(message.chat.id, 'Слишком много символов. Напишите уменьшенный отзыв')
+               bot.register_next_step_handler(message, step3)
+           else:
+               bot.send_message(message.chat.id, 'Спасибо за отзыв!', reply_markup=menu)
+               cur = conn.cursor()
+               cur.execute('INSERT INTO reviews (id_reviewed, id_reviewer, mark, review) VALUES(?, ?, ?, ?)',
+                           (id_reviewed, call.from_user.id, q_rate, q_review))
+               conn.commit()
+               cur.execute("SELECT mark_n, review_n FROM jobs WHERE id=?", (id_reviewed,))
+               old = cur.fetchone()
+               if old is None:
+                   cur.execute("SELECT mark_n, review_n FROM workers WHERE id=?", (id_reviewed,))
+                   old = cur.fetchone()
+                   mark = int(old[0]) + int(q_rate)
+                   rev = int(old[1]) + 1
+                   cur.execute('UPDATE workers SET mark_n=?, review_n=? WHERE id=?',
+                               (mark, rev, id_reviewed))
+                   conn.commit()
+               else:
+                   mark = int(old[0]) + int(q_rate)
+                   rev = int(old[1]) + 1
+                   cur.execute('UPDATE jobs SET mark_n=?, review_n=? WHERE id=?',
+                               (mark, rev, id_reviewed))
+                   conn.commit()
+               cur.close()
+
+       cur=conn.cursor()
+       cur.execute('SELECT * FROM reviews WHERE id_reviewed=? AND id_reviewer=?', (id_reviewed, call.from_user.id))
+       if cur.fetchone() is None:
+           step0()
+       else:
+           bot.send_message(call.from_user.id, 'Вы уже оставляли отзыв на этого пользователя')
+       cur.close()
+
+   if call.data.startswith('ответ'):
+       id_reviewed=int(call.data[5:])
+       cur=conn.cursor()
+       cur.execute('SELECT * FROM reviews WHERE id_reviewed = ?', (id_reviewed,))
+       rows=cur.fetchall()
+       text_rev=''
+       for row in rows:
+           mark=row[2]
+           rev = row[3]
+           text_rev+= 'Оценка:' + str(mark) + '\n' +'Отзыв:' + rev + '\n\n'
+       if text_rev=='':
+           text_rev = 'Отзывов пока нет'
+       bot.send_message(call.from_user.id, text_rev)
+       cur.close()
+
+   if call.data == 'offer':
+       def f1():
+           bot.send_message(call.message.chat.id, 'А вы уверены, что именно эта вакансия вас интересует? Введите название вакансии еще раз) (парикмахер, колорист, стилист или специалист по плетению):')
+           bot.register_next_step_handler(call.message, vacancy)
+
+       def vacancy(message):
+           field = message.text.strip().lower()
+
+           if field == 'колорист':
+               bot.send_message(message.chat.id, 'Такая вакансия есть. Зарплата 40 000 - 50 000 руб.')
+           elif field == 'парикмахер':
+               bot.send_message(message.chat.id, 'Такая вакансия есть. Зарплата 50 000 - 70 000 руб.')
+           elif field == 'специалист по плетению':
+               bot.send_message(message.chat.id, 'Такая вакансия есть. Зарплата 30 000 - 50 000 руб.')
+           elif field == 'стилист':
+               bot.send_message(message.chat.id, 'Такая вакансия есть. Зарплата 60 000 - 80 000 руб.')
+           else:
+               bot.send_message(message.chat.id, 'Извините, такой вакансии нет.')
+
+       f1()
+
 
 bot.polling(none_stop=True)
